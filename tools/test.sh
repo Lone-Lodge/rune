@@ -62,5 +62,22 @@ echo "== dedup: en andrad byte kostar en chunk =="
 n=$(find .rune/chunks -type f | wc -l)
 check "chunkar delas mellan commits" "$([ "$n" -lt 12 ] && echo ja || echo nej)" "ja"
 
+echo "== las =="
+printf 'ny
+' > last.txt
+"$RUNE" lock last.txt >/dev/null
+check "locks listar den" "$("$RUNE" locks | grep -c 'last.txt')" "1"
+check "eget las hindrar inte" "$("$RUNE" add last.txt | grep -c 'koade 1')" "1"
+# nagon annans las: skriv raden direkt, det ar det en remote skulle ha gjort
+printf 'annans.txt	kollega	1
+' >> .rune/locks
+printf 'ny
+' > annans.txt
+check "annans las stoppar add" "$("$RUNE" add annans.txt | grep -c 'last av kollega')" "1"
+check "annans las kommer inte in i kon" "$(grep -c 'annans.txt' .rune/index || true)" "0"
+check "kan inte slappa annans las" "$("$RUNE" unlock annans.txt | grep -c 'inte din')" "1"
+check "eget las gar att slappa" "$("$RUNE" unlock last.txt | grep -c 'slappt')" "1"
+check "det andra laset star kvar" "$("$RUNE" locks | grep -c 'kollega')" "1"
+
 cd "$ROOT"; rm -rf "$T"
 [ "$fail" = 0 ] && echo "rune: allt gront" || { echo "rune: NAGOT GICK FEL"; exit 1; }

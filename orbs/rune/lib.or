@@ -218,6 +218,13 @@ public define read_lines(path: text) -> [text] uses files:
             out = append(out, line)
     out
 
+# Index och las ar FORANDERLIGA radfiler som vanliga verktyg ska kunna
+# lasa och lagga till i, sa de slutar med radbrytning. Blob- och
+# manifestkroppar gor det INTE: de ligger under en hash, och en byte
+# till dar hade andrat varje id utan att ge nagot.
+define write_lines(path: text, lines: [text]) uses files:
+    write_file(path, if length(lines) is 0 then "" else join(lines, "\n") + text_of([10]))
+
 public define entry_path(line: text) -> text = split(line, tab())[0]
 public define entry_blob(line: text) -> text = split(line, tab())[1]
 
@@ -231,10 +238,14 @@ define put_entry(lines: [text], path: text, blob: text) -> [text]:
     sorted(out, order_of{less: (a, b): a < b})
 
 # Koa EN fil: lagra innehallet, skriv sokvag -> blob-id i indexet.
-public define add(root: text, rel: text) -> text uses files:
+# "" nar nagon ANNAN haller last pa sokvagen - se las-avsnittet nedan.
+public define add(root: text, rel: text, owner: text) -> text uses files:
+    held = lock_owner(root, rel)
+    if not is_empty(held) and held is not owner:
+        return ""
     blob = put_file(rune_dir(root), root + "/" + rel)
     idx = put_entry(read_lines(rune_dir(root) + "/index"), rel, blob)
-    write_file(rune_dir(root) + "/index", join(idx, "\n"))
+    write_lines(rune_dir(root) + "/index", idx)
     blob
 
 # --- refs och commits ---------------------------------------------------
@@ -325,3 +336,59 @@ public define author_name() -> text uses env:
         return u
     v = env("USER")
     if is_empty(v) then "okand" else v
+
+# --- las ----------------------------------------------------------------
+# En .uasset gar inte att sla ihop. Da ar las enda arbetssattet: den som
+# ska andra en fil tar den forst, och alla andra ser att den ar tagen.
+#
+#   .rune/locks    "sokvag<TAB>agare<TAB>unixtid", en per rad, sorterad
+#
+# Laset ar SPARRET, inte en varning: `add` vagrar koa en sokvag nagon annan
+# haller. Darfor bor kontrollen i add och inte i CLI:t - annars gar den att
+# ga runt genom att anropa lagret direkt.
+#
+# Sa lange det inte finns nagon remote ar lasen lokala. Formatet ar dock
+# det som ska synkas, och sparret ar det som maste finnas fore en remote.
+
+define locks_path(root: text) -> text = rune_dir(root) + "/locks"
+
+public define read_locks(root: text) -> [text] uses files:
+    read_lines(locks_path(root))
+
+public define lock_holder(line: text) -> text = split(line, tab())[1]
+
+# Vem haller sokvagen, "" om den ar ledig.
+public define lock_owner(root: text, path: text) -> text uses files:
+    edit found = ""
+    loop l in read_locks(root):
+        if entry_path(l) is path:
+            found = lock_holder(l)
+    found
+
+define write_locks(root: text, lines: [text]) uses files:
+    write_lines(locks_path(root), lines)
+
+# Ta sokvagen. "" nar den ar din efterat, annars namnet som redan haller
+# den. Att ta en du redan haller ar tyst ok.
+public define lock(root: text, path: text, owner: text) -> text uses files, clock:
+    held = lock_owner(root, path)
+    if not is_empty(held):
+        return if held is owner then "" else held
+    line = path + tab() + owner + tab() + (now_unix() as text)
+    write_locks(root, sorted(append(read_locks(root), line), order_of{less: (a, b): a < b}))
+    ""
+
+# Slapp sokvagen. "" nar den ar ledig efterat, annars namnet som haller
+# den - man tar inte nagon annans las ifran dem.
+public define unlock(root: text, path: text, owner: text) -> text uses files:
+    held = lock_owner(root, path)
+    if is_empty(held):
+        return ""
+    if held is not owner:
+        return held
+    edit kept = []
+    loop l in read_locks(root):
+        if entry_path(l) is not path:
+            kept = append(kept, l)
+    write_locks(root, kept)
+    ""

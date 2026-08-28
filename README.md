@@ -55,6 +55,9 @@ forsvinner.
     rune commit "meddelande"
     rune log
     rune checkout <commit>      # skriv ut en ogonblicksbild
+    rune lock <sokvag>          # ta filen, ingen annan far koa den
+    rune unlock <sokvag>        # slapp den
+    rune locks                  # vem haller vad
     rune stat <fil>             # visa chunkningen utan att lagra
 
 ## .runeignore
@@ -68,9 +71,31 @@ allt darunder. Inga globbar. For ett Unreal-projekt racker:
     Binaries/
     .vs/
 
+## Las
+
+En `.uasset` gar inte att sla ihop. Da ar las enda arbetssattet: den som ska
+andra en fil tar den forst, alla andra ser att den ar tagen.
+
+    rune lock Content/Karaktar.uasset
+    rune locks
+    rune unlock Content/Karaktar.uasset
+
+Laset ar **sparret, inte en varning**: `add` vagrar koa en sokvag nagon
+annan haller, sa den kan inte ta sig in i en commit. Kontrollen bor i `add`
+och inte i CLI:t, annars gar den att ga runt genom att anropa lagret direkt.
+Man tar inte heller nagon annans las ifran dem - `unlock` vagrar.
+
+    .rune/locks    "sokvag<TAB>agare<TAB>unixtid", en per rad, sorterad
+
+Sa lange det inte finns nagon remote ar lasen lokala. Formatet ar det som
+ska synkas och sparret det som maste finnas fore en remote, sa det ar den
+ordningen. Nasta steg for laset ar att markera latta filer skrivskyddade pa
+disk, sa Unreal sjalvt visar dem som tagna. Det kraver en ny runtime-extern
+i Orion och ligger darfor utanfor.
+
 ## Granser
 
 Filer lases hela i minnet, sa nagra hundra MB per fil. `status` hashar om
 hela arbetstradet varje gang - korrekt, men langsamt pa stora repon.
-Manifestet sorteras med en urvalssortering. Ingen remote, inga grenar,
-inga las. Inget av det andrar formatet.
+Manifestet sorteras med en urvalssortering. Ingen remote och inga grenar.
+Inget av det andrar formatet.

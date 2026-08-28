@@ -6,6 +6,9 @@
 #   rune commit <meddelande>     koen blir en ogonblicksbild
 #   rune log                     commit-kedjan fran HEAD och bakat
 #   rune checkout <commit>       skriv ut en ogonblicksbild till arbetstradet
+#   rune lock <sokvag>           ta filen, ingen annan far koa den
+#   rune unlock <sokvag>         slapp den
+#   rune locks                   vem haller vad
 #   rune stat <fil>              visa chunkningen utan att lagra nagot
 
 use rune
@@ -28,16 +31,42 @@ define cmd_init() uses files, console:
         init(root())
         print_line("tomt rune-repo i .rune/")
 
-define cmd_add(what: text) uses files, console:
+define cmd_add(what: text) uses files, console, env:
+    me = author_name()
     edit n = 0
-    if what is ".":
-        loop rel in walk(root()):
-            add(root(), rel)
+    edit blocked = 0
+    targets = if what is "." then walk(root()) else [what]
+    loop rel in targets:
+        if is_empty(add(root(), rel, me)):
+            print_line("  last av {lock_owner(root(), rel)}: {rel}")
+            blocked = blocked + 1
+        else:
             n = n + 1
-    else:
-        add(root(), what)
-        n = 1
     print_line("koade {n} fil(er)")
+    if blocked > 0:
+        print_line("{blocked} hoppades over - las slapps med `rune unlock`")
+
+define cmd_lock(path: text) uses files, console, clock, env:
+    held = lock(root(), path, author_name())
+    if is_empty(held):
+        print_line("last: {path}")
+    else:
+        print_line("redan last av {held}: {path}")
+
+define cmd_unlock(path: text) uses files, console, env:
+    held = unlock(root(), path, author_name())
+    if is_empty(held):
+        print_line("slappt: {path}")
+    else:
+        print_line("hall av {held}, inte din att slappa: {path}")
+
+define cmd_locks() uses files, console:
+    edit n = 0
+    loop l in read_locks(root()):
+        print_line("  {lock_holder(l)}  {entry_path(l)}")
+        n = n + 1
+    if n is 0:
+        print_line("inga las")
 
 define cmd_status() uses files, console:
     idx = read_lines(rune_dir(root()) + "/index")
@@ -94,7 +123,7 @@ define cmd_stat(path: text) uses files, console:
 define main() -> number uses files, console, clock, env:
     args = arguments()
     if length(args) < 2:
-        print_line("rune init | add | status | commit | log | checkout | stat")
+        print_line("rune init | add | status | commit | log | checkout | lock | unlock | locks | stat")
         return 1
     cmd = args[1]
     if cmd is "init":
@@ -114,6 +143,15 @@ define main() -> number uses files, console, clock, env:
     else if cmd is "checkout":
         if need_repo():
             cmd_checkout(args[2])
+    else if cmd is "lock":
+        if need_repo():
+            cmd_lock(args[2])
+    else if cmd is "unlock":
+        if need_repo():
+            cmd_unlock(args[2])
+    else if cmd is "locks":
+        if need_repo():
+            cmd_locks()
     else if cmd is "stat":
         cmd_stat(args[2])
     else:
