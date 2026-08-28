@@ -62,6 +62,13 @@ echo "== dedup: en andrad byte kostar en chunk =="
 n=$(find .rune/chunks -type f | wc -l)
 check "chunkar delas mellan commits" "$([ "$n" -lt 12 ] && echo ja || echo nej)" "ja"
 
+echo "== historik per fil =="
+check "png har tva versioner" "$("$RUNE" history bild.png | wc -l)" "2"
+check "kod.txt har en" "$("$RUNE" history kod.txt | wc -l)" "1"
+check "okand fil har ingen" "$("$RUNE" history finns-inte.txt | grep -c 'ingen historik')" "1"
+"$RUNE" show "$C1" bild.png v1.bin >/dev/null
+check "show ger commit 1:s innehall" "$(md5 v1.bin)" "$H_PNG"
+
 echo "== las =="
 printf 'ny
 ' > last.txt

@@ -126,15 +126,18 @@ public define file_blob_id(path: text) -> text uses files:
         start = stop
     sha256(blob_body(ids))
 
-# Aterskapa en fil ur sitt recept.
-public define get_file(rune_dir: text, blob_id: text, out_path: text) uses files:
-    recipe = get_object(rune_dir, "blobs", blob_id)
+# Innehallet bakom ett blob-id: chunkarna, i receptets ordning.
+public define blob_bytes(rune_dir: text, blob_id: text) -> text uses files:
     edit body = ""
-    loop id in split(recipe, "\n"):
+    loop id in split(get_object(rune_dir, "blobs", blob_id), "\n"):
         if not is_empty(id):
             body = body + get_object(rune_dir, "chunks", id)
+    body
+
+# Aterskapa en fil ur sitt recept.
+public define get_file(rune_dir: text, blob_id: text, out_path: text) uses files:
     mkdir_all(path_parent(out_path))
-    write_file(out_path, body)
+    write_file(out_path, blob_bytes(rune_dir, blob_id))
 
 # --- repo ---------------------------------------------------------------
 # Arbetstradet ar sanningen om NUET; .rune ar sanningen om historien.
@@ -392,3 +395,58 @@ public define unlock(root: text, path: text, owner: text) -> text uses files:
             kept = append(kept, l)
     write_locks(root, kept)
     ""
+
+# --- fragor som en yta behover ------------------------------------------
+
+# Filens versioner, nyast forst: en rad per DISTINKT innehall, markt med
+# den nyaste commit som bar det. Rader "commit<TAB>unixtid<TAB>blob".
+public define file_history(root: text, rel: text) -> [text] uses files:
+    rd = rune_dir(root)
+    edit out = []
+    edit seen = ""
+    loop id in log(root):
+        blob = lookup(commit_manifest(root, id), rel)
+        if not is_empty(blob) and blob is not seen:
+            when = commit_field(get_object(rd, "commits", id), "time")
+            out = append(out, id + tab() + when + tab() + blob)
+            seen = blob
+    out
+
+# Filens innehall vid en commit, "" om den inte fanns da.
+public define file_at(root: text, id: text, rel: text) -> text uses files:
+    blob = lookup(commit_manifest(root, id), rel)
+    if is_empty(blob) then "" else blob_bytes(rune_dir(root), blob)
+
+# Arbetstradet mott kon och mot HEAD. Rader "tillstand<TAB>sokvag", dar
+# tillstand ar koat, nytt, andrat eller borttaget. Oforandrade filer namns
+# inte alls. EN definition av vad status betyder, delad av CLI och yta -
+# annars sager de tva olika saker om samma trad.
+public define status(root: text) -> [text] uses files:
+    idx = read_lines(rune_dir(root) + "/index")
+    head = head_commit(root)
+    snapshot = if is_empty(head) then [] else commit_manifest(root, head)
+    edit rows = []
+    edit seen = []
+    loop rel in walk(root):
+        cur = file_blob_id(root + "/" + rel)
+        seen = append(seen, rel)
+        staged = lookup(idx, rel)
+        committed = lookup(snapshot, rel)
+        if staged is cur:
+            rows = append(rows, "koat" + tab() + rel)
+        else if is_empty(committed):
+            rows = append(rows, "nytt" + tab() + rel)
+        else if committed is not cur:
+            rows = append(rows, "andrat" + tab() + rel)
+    loop line in snapshot:
+        p = entry_path(line)
+        if not has_text(seen, p):
+            rows = append(rows, "borttaget" + tab() + p)
+    rows
+
+define has_text(xs: [text], v: text) -> truth:
+    edit hit = false
+    loop x in xs:
+        if x is v:
+            hit = true
+    hit

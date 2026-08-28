@@ -6,6 +6,8 @@
 #   rune commit <meddelande>     koen blir en ogonblicksbild
 #   rune log                     commit-kedjan fran HEAD och bakat
 #   rune checkout <commit>       skriv ut en ogonblicksbild till arbetstradet
+#   rune history <sokvag>        filens versioner, nyast forst
+#   rune show <commit> <sokvag> <utfil>   filens innehall vid en commit
 #   rune lock <sokvag>           ta filen, ingen annan far koa den
 #   rune unlock <sokvag>         slapp den
 #   rune locks                   vem haller vad
@@ -69,32 +71,9 @@ define cmd_locks() uses files, console:
         print_line("inga las")
 
 define cmd_status() uses files, console:
-    idx = read_lines(rune_dir(root()) + "/index")
-    head = head_commit(root())
-    snapshot = if is_empty(head) then [] else commit_manifest(root(), head)
-    edit seen = []
-    loop rel in walk(root()):
-        cur = file_blob_id(root() + "/" + rel)
-        seen = append(seen, rel)
-        staged = lookup(idx, rel)
-        committed = lookup(snapshot, rel)
-        if staged is cur:
-            print_line("  koat      {rel}")
-        else if is_empty(committed):
-            print_line("  nytt      {rel}")
-        else if committed is not cur:
-            print_line("  andrat    {rel}")
-    loop line in snapshot:
-        p = entry_path(line)
-        if not includes_text(seen, p):
-            print_line("  borttaget {p}")
-
-define includes_text(xs: [text], v: text) -> truth:
-    edit hit = false
-    loop x in xs:
-        if x is v:
-            hit = true
-    hit
+    loop row in status(root()):
+        f = split(row, text_of([9]))
+        print_line("  {pad_right(f[0], 10, " ")}{f[1]}")
 
 define cmd_commit(msg: text) uses files, console, clock, env:
     id = commit(root(), msg, author_name())
@@ -114,6 +93,25 @@ define cmd_checkout(id: text) uses files, console:
     n = checkout(root(), id)
     print_line("skrev {n} fil(er)")
 
+define cmd_history(rel: text) uses files, console:
+    edit n = 0
+    loop row in file_history(root(), rel):
+        f = split(row, text_of([9]))
+        print_line("  {text_of(bytes_part(bytes_of(f[0]), 0, 12))}  {utc_time(int_from_text(f[1]), "%Y-%m-%d %H:%M")}")
+        n = n + 1
+    if n is 0:
+        print_line("ingen historik for {rel}")
+
+# Skriver till FIL, aldrig till stdout: binart innehall genom en konsol
+# blir CRLF-oversatt pa Windows och kommer fram trasigt.
+define cmd_show(id: text, rel: text, out: text) uses files, console:
+    body = file_at(root(), id, rel)
+    if is_empty(body):
+        print_line("fanns inte i {id}: {rel}")
+    else:
+        write_file(out, body)
+        print_line("skrev {out}")
+
 define cmd_stat(path: text) uses files, console:
     b = bytes_of(read_file(path))
     cuts = chunk_offsets(b)
@@ -123,7 +121,7 @@ define cmd_stat(path: text) uses files, console:
 define main() -> number uses files, console, clock, env:
     args = arguments()
     if length(args) < 2:
-        print_line("rune init | add | status | commit | log | checkout | lock | unlock | locks | stat")
+        print_line("rune init | add | status | commit | log | checkout | history | show | lock | unlock | locks | stat")
         return 1
     cmd = args[1]
     if cmd is "init":
@@ -152,6 +150,12 @@ define main() -> number uses files, console, clock, env:
     else if cmd is "locks":
         if need_repo():
             cmd_locks()
+    else if cmd is "history":
+        if need_repo():
+            cmd_history(args[2])
+    else if cmd is "show":
+        if need_repo():
+            cmd_show(args[2], args[3], args[4])
     else if cmd is "stat":
         cmd_stat(args[2])
     else:
