@@ -62,6 +62,18 @@ echo "== dedup: en andrad byte kostar en chunk =="
 n=$(find .rune/chunks -type f | wc -l)
 check "chunkar delas mellan commits" "$([ "$n" -lt 12 ] && echo ja || echo nej)" "ja"
 
+echo "== statcachen =="
+# Cachen far ALDRIG dolja en andring. Det ar hela risken med den.
+check "status skriver en cache" "$([ -f .rune/stat ] && echo ja || echo nej)" "ja"
+f1="$("$RUNE" status)"
+check "andra korningen ger samma svar" "$("$RUNE" status)" "$f1"
+python -c "
+d=bytearray(open('bild.png','rb').read()); d[9000]^=0xFF
+open('bild.png','wb').write(d)"
+check "cachen slapper igenom en andring" "$("$RUNE" status | grep -c 'bild.png')" "1"
+printf 'x' >> sub/djup.bin
+check "och en storleksandring" "$("$RUNE" status | grep -c 'djup.bin')" "1"
+
 echo "== historik per fil =="
 check "png har tva versioner" "$("$RUNE" history bild.png | wc -l)" "2"
 check "kod.txt har en" "$("$RUNE" history kod.txt | wc -l)" "1"

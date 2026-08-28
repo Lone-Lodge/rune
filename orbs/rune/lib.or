@@ -457,6 +457,44 @@ public define file_at(root: text, id: text, rel: text) -> text uses files:
     blob = lookup(commit_manifest(root, id), rel)
     if is_empty(blob) then "" else blob_bytes(rune_dir(root), blob)
 
+# --- statcachen -----------------------------------------------------------
+# `status` hashade om HELA arbetstradet varje gang. Filen laser vi anda,
+# men chunkningen och hashningen ar det dyra, och for en fil som inte rort
+# sig ar den ren spillan.
+#
+# Cachen bor i EGEN fil och inte i indexet: indexet haller bara KOADE
+# filer, och det ar just de okoade som ar manga och kostar tid.
+#
+#   .rune/stat    "sokvag<TAB>mtime<TAB>storlek<TAB>blob-id", en per rad
+#
+# GRANSEN, uttalad: andras en fil inom samma mtime-tick OCH behaller exakt
+# samma storlek tror cachen att den ar oforandrad. Det ar samma kapplopning
+# git har, och den syns forst nasta gang mtime rors. `rune add <fil>` gar
+# alltid forbi cachen, sa det finns en vag runt.
+define stat_path(root: text) -> text = rune_dir(root) + "/stat"
+
+define stat_nyckel(root: text, rel: text) -> text uses files:
+    p = root + "/" + rel
+    (modified_at(p) as text) + tab() + (size_of(p) as text)
+
+# Cachen som en TABELL, inte en lista att leta i. En linjar sokning per fil
+# gav n kvadrat over tradet: 10 000 filer hade blivit hundra miljoner
+# jamforelser, alltsa dyrare an hashningen cachen skulle slippa undan.
+define stat_karta(root: text) -> table of text uses files:
+    edit m: table of text = {}
+    loop l in read_lines(stat_path(root)):
+        f = split(l, tab())
+        if length(f) >= 4:
+            m[f[0]] = f[1] + tab() + f[2] + tab() + f[3]
+    m
+
+# Blob-id om mtime och storlek stammer, annars "".
+define stat_traff(m: table of text, rel: text, nyckel: text) -> text:
+    if not has(m, rel):
+        return ""
+    f = split(m[rel], tab())
+    if length(f) >= 3 and (f[0] + tab() + f[1]) is nyckel then f[2] else ""
+
 # Arbetstradet mott kon och mot HEAD. Rader "tillstand<TAB>sokvag", dar
 # tillstand ar koat, nytt, andrat eller borttaget. Oforandrade filer namns
 # inte alls. EN definition av vad status betyder, delad av CLI och yta -
@@ -465,10 +503,16 @@ public define status(root: text) -> [text] uses files:
     idx = read_lines(rune_dir(root) + "/index")
     head = head_commit(root)
     snapshot = if is_empty(head) then [] else commit_manifest(root, head)
+    cache = stat_karta(root)
+    edit fardsk = []
     edit rows = []
     edit seen = []
     loop rel in walk(root):
-        cur = file_blob_id(root + "/" + rel)
+        nyckel = stat_nyckel(root, rel)
+        edit cur = stat_traff(cache, rel, nyckel)
+        if is_empty(cur):
+            cur = file_blob_id(root + "/" + rel)
+        fardsk = append(fardsk, rel + tab() + nyckel + tab() + cur)
         seen = append(seen, rel)
         staged = lookup(idx, rel)
         committed = lookup(snapshot, rel)
@@ -482,6 +526,7 @@ public define status(root: text) -> [text] uses files:
         p = entry_path(line)
         if not has_text(seen, p):
             rows = append(rows, "borttaget" + tab() + p)
+    write_lines(stat_path(root), fardsk)
     rows
 
 define has_text(xs: [text], v: text) -> truth:

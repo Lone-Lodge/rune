@@ -128,10 +128,24 @@ lokalt kan aldrig saga att nagon ANNAN haller filen, och da ar det ingen
 sparr utan en anteckning. Den lokala lasfilen blir en cache som `add` far
 sin sparr ur.
 
+## Statcachen
+
+`status` hashade om hela arbetstradet varje gang. Nu minns `.rune/stat`
+mtime och storlek per fil, och bara det som rort sig hashas om.
+
+    57 MB, 40 filer      kall cache 1,08 s  ->  varm 0,06 s
+
+Cachen bor i EGEN fil och inte i indexet: indexet haller bara KOADE filer,
+och det ar just de okoade som ar manga och kostar tid.
+
+**Gransen, uttalad:** andras en fil inom samma mtime-tick OCH behaller
+exakt samma storlek tror cachen att den ar oforandrad. Det ar samma
+kapplopning git har. Den syns nasta gang mtime rors, och `rune add <fil>`
+gar alltid forbi cachen.
+
 ## Granser
 
-Filer lases hela i minnet, sa nagra hundra MB per fil. `status` hashar om
-hela arbetstradet varje gang - korrekt, men langsamt pa stora repon.
+Filer lases hela i minnet, sa nagra hundra MB per fil.
 Manifestet sorteras med en urvalssortering. Inga grenar, ingen
 autentisering pa servern - den litar pa alla som kan na porten, sa den hor
 hemma bakom brandvagg eller VPN tills det finns.
