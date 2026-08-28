@@ -1,0 +1,10 @@
+[package]
+name = "rune"
+version = "0.1.0"
+description = "rune - innehallsadresserad lagring med content-defined chunking, byggd for stora binarer."
+
+[orbs]
+rune = "path:orbs/rune"
+encoding = "*"
+os = "*"
+text = "*"

@@ -1,0 +1,122 @@
+# rune - CLI.
+#
+#   rune init                    starta ett repo har
+#   rune add <sokvag> | .        koa en fil, eller hela tradet
+#   rune status                  vad som ar koat, andrat, nytt, borttaget
+#   rune commit <meddelande>     koen blir en ogonblicksbild
+#   rune log                     commit-kedjan fran HEAD och bakat
+#   rune checkout <commit>       skriv ut en ogonblicksbild till arbetstradet
+#   rune stat <fil>              visa chunkningen utan att lagra nagot
+
+use rune
+use os
+use text
+use time
+
+define root() -> text = "."
+
+define need_repo() -> truth uses files, console:
+    if is_repo(root()):
+        return true
+    print_line("inget rune-repo har. `rune init` forst.")
+    false
+
+define cmd_init() uses files, console:
+    if is_repo(root()):
+        print_line("finns redan")
+    else:
+        init(root())
+        print_line("tomt rune-repo i .rune/")
+
+define cmd_add(what: text) uses files, console:
+    edit n = 0
+    if what is ".":
+        loop rel in walk(root()):
+            add(root(), rel)
+            n = n + 1
+    else:
+        add(root(), what)
+        n = 1
+    print_line("koade {n} fil(er)")
+
+define cmd_status() uses files, console:
+    idx = read_lines(rune_dir(root()) + "/index")
+    head = head_commit(root())
+    snapshot = if is_empty(head) then [] else commit_manifest(root(), head)
+    edit seen = []
+    loop rel in walk(root()):
+        cur = file_blob_id(root() + "/" + rel)
+        seen = append(seen, rel)
+        staged = lookup(idx, rel)
+        committed = lookup(snapshot, rel)
+        if staged is cur:
+            print_line("  koat      {rel}")
+        else if is_empty(committed):
+            print_line("  nytt      {rel}")
+        else if committed is not cur:
+            print_line("  andrat    {rel}")
+    loop line in snapshot:
+        p = entry_path(line)
+        if not includes_text(seen, p):
+            print_line("  borttaget {p}")
+
+define includes_text(xs: [text], v: text) -> truth:
+    edit hit = false
+    loop x in xs:
+        if x is v:
+            hit = true
+    hit
+
+define cmd_commit(msg: text) uses files, console, clock, env:
+    id = commit(root(), msg, author_name())
+    if is_empty(id):
+        print_line("inget koat")
+    else:
+        print_line("{id} {msg}")
+
+define cmd_log() uses files, console:
+    loop id in log(root()):
+        body = get_object(rune_dir(root()), "commits", id)
+        short = text_of(bytes_part(bytes_of(id), 0, 12))
+        when = utc_time(int_from_text(commit_field(body, "time")), "%Y-%m-%d %H:%M")
+        print_line("{short}  {when}  {commit_field(body, "author")}  {commit_message(body)}")
+
+define cmd_checkout(id: text) uses files, console:
+    n = checkout(root(), id)
+    print_line("skrev {n} fil(er)")
+
+define cmd_stat(path: text) uses files, console:
+    b = bytes_of(read_file(path))
+    cuts = chunk_offsets(b)
+    n = bytes_count(b)
+    print_line("{path}: {n} bytes, {length(cuts)} chunkar")
+
+define main() -> number uses files, console, clock, env:
+    args = arguments()
+    if length(args) < 2:
+        print_line("rune init | add | status | commit | log | checkout | stat")
+        return 1
+    cmd = args[1]
+    if cmd is "init":
+        cmd_init()
+    else if cmd is "add":
+        if need_repo():
+            cmd_add(if length(args) > 2 then args[2] else ".")
+    else if cmd is "status":
+        if need_repo():
+            cmd_status()
+    else if cmd is "commit":
+        if need_repo():
+            cmd_commit(if length(args) > 2 then args[2] else "utan meddelande")
+    else if cmd is "log":
+        if need_repo():
+            cmd_log()
+    else if cmd is "checkout":
+        if need_repo():
+            cmd_checkout(args[2])
+    else if cmd is "stat":
+        cmd_stat(args[2])
+    else:
+        print_line("okant kommando: {cmd}")
+        return 1
+    0

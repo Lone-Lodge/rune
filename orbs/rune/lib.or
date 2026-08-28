@@ -1,0 +1,327 @@
+# rune - innehallsadresserad lagring med content-defined chunking.
+#
+# En fil lagras inte som en fil utan som ett RECEPT: listan av chunkar den
+# bestar av. Chunkgransen valjs av innehallet via en rullande hash, inte av
+# en fast storlek. Det ar hela poangen: andras en byte mitt i en 200 MB
+# .uasset flyttas inte alla efterfoljande granser, sa bara den chunken ar ny.
+# Helfilshashning (git-LFS) skulle lagra 200 MB igen.
+#
+#   chunk      innehall -> sha256. Variabel storlek.
+#   blob       en fils recept: chunk-id, ett per rad.
+#   manifest   en ogonblicksbild: "sokvag<TAB>blob-id", en per rad.
+#   commit     foralder, manifest-id, forfattare, tid, meddelande.
+#
+# Chunk-id ar hashen av det OKOMPRIMERADE innehallet. Darfor kan komprimering
+# laggas till senare som en ren lagringstransform utan att ett enda id andras.
+
+use encoding
+use os
+use text
+
+# --- chunkparametrar ----------------------------------------------------
+# FRUSNA. Andras nagot av detta flyttas varje grans och all dedup mot
+# befintliga repon forsvinner. De ar en del av formatet, inte en installning.
+define chunk_min() -> number = 16384
+define chunk_norm() -> number = 65536
+define chunk_max() -> number = 262144
+# Grans nar (fp & mask) is 0. Strangare mask (16 bitar, 1/65536) fore
+# normalstorleken, losare (14 bitar, 1/16384) efter: det drar storlekarna
+# mot 64 KB istallet for en lang svans.
+#
+# Bitarna ar SPRIDDA over hela ordet, inte de lagsta. I en gear-hash beror
+# bit k bara pa de k+1 senaste bytesen, sa en lagbitsmask (0xFFFF) skulle ge
+# ett 16-bytes fonster. Spridda bitar upp till bit 31 ger hela 32.
+define mask_strict() -> number = 3743924328
+define mask_loose() -> number = 2329563190
+
+# 256 tal ur en MINSTD-generator med fast fro. Tabellen ar en del av
+# formatet: samma bytes maste ge samma granser for alltid.
+define gear_table() -> [number]:
+    edit t = []
+    edit x = 1
+    loop i in 0 until 256:
+        x = (x * 48271) % 2147483647
+        t = append(t, x)
+    t
+
+# Slutoffsets for varje chunk i `b`. Sista elementet ar alltid langden.
+public define chunk_offsets(b: [number]) -> [number]:
+    gear = gear_table()
+    n = bytes_count(b)
+    edit cuts = []
+    edit start = 0
+    loop:
+        if start >= n:
+            break
+        edit fp = 0
+        edit i = start + chunk_min()
+        edit cut = 0 - 1
+        loop:
+            if i >= n:
+                cut = n
+                break
+            if i - start >= chunk_max():
+                cut = i
+                break
+            fp = ((fp * 2) + gear[byte_at(b, i)]) % 4294967296
+            mask = if i - start < chunk_norm() then mask_strict() else mask_loose()
+            if (fp & mask) is 0:
+                cut = i + 1
+                break
+            i = i + 1
+        cuts = append(cuts, cut)
+        start = cut
+    cuts
+
+# --- objektlagring ------------------------------------------------------
+# Ett objekt bor pa <rune>/<sort>/ab/cdef..., tva hex som mapp sa en katalog
+# aldrig far hundratusen poster.
+public define object_path(rune_dir: text, sort: text, id: text) -> text:
+    head = text_of(bytes_part(bytes_of(id), 0, 2))
+    rest = text_of(bytes_part(bytes_of(id), 2, byte_count(id)))
+    rune_dir + "/" + sort + "/" + head + "/" + rest
+
+# Skriv ett objekt om det inte redan finns. Returnerar id:t.
+public define put_object(rune_dir: text, sort: text, body: text) -> text uses files:
+    id = sha256(body)
+    path = object_path(rune_dir, sort, id)
+    if file_exists(path) is 0:
+        mkdir_all(path_parent(path))
+        write_file(path, body)
+    id
+
+public define get_object(rune_dir: text, sort: text, id: text) -> text uses files:
+    read_file(object_path(rune_dir, sort, id))
+
+public define has_object(rune_dir: text, sort: text, id: text) -> truth uses files:
+    file_exists(object_path(rune_dir, sort, id)) is not 0
+
+# --- filer in och ut ----------------------------------------------------
+# Lagra en fil: chunka, skriv de chunkar som saknas, skriv receptet.
+# Returnerar blob-id. Filen lases hel i minnet - v1-granns, se README.
+public define put_file(rune_dir: text, path: text) -> text uses files:
+    b = bytes_of(read_file(path))
+    cuts = chunk_offsets(b)
+    edit ids = []
+    edit start = 0
+    loop i in 0 until length(cuts):
+        stop = cuts[i]
+        ids = append(ids, put_object(rune_dir, "chunks", text_of(bytes_part(b, start, stop))))
+        start = stop
+    put_object(rune_dir, "blobs", blob_body(ids))
+
+# Blob-kroppen ar chunk-id, ett per rad. EN regel, delad av den som lagrar
+# och den som bara vill veta id:t - annars kan status och add glida isar.
+public define blob_body(ids: [text]) -> text = join(ids, "\n")
+
+# Blob-id for en fil UTAN att lagra nagot. Status ska inte skriva objekt.
+public define file_blob_id(path: text) -> text uses files:
+    b = bytes_of(read_file(path))
+    cuts = chunk_offsets(b)
+    edit ids = []
+    edit start = 0
+    loop i in 0 until length(cuts):
+        stop = cuts[i]
+        ids = append(ids, sha256(text_of(bytes_part(b, start, stop))))
+        start = stop
+    sha256(blob_body(ids))
+
+# Aterskapa en fil ur sitt recept.
+public define get_file(rune_dir: text, blob_id: text, out_path: text) uses files:
+    recipe = get_object(rune_dir, "blobs", blob_id)
+    edit body = ""
+    loop id in split(recipe, "\n"):
+        if not is_empty(id):
+            body = body + get_object(rune_dir, "chunks", id)
+    mkdir_all(path_parent(out_path))
+    write_file(out_path, body)
+
+# --- repo ---------------------------------------------------------------
+# Arbetstradet ar sanningen om NUET; .rune ar sanningen om historien.
+#
+#   index      koade filer: "sokvag<TAB>blob-id", en per rad
+#   manifest   samma format, men en hel ogonblicksbild, sorterad pa sokvag
+#   commit     fyra faltrader, tom rad, sedan meddelandet (som far radbrytas)
+#
+# Manifestet SORTERAS. Samma trad maste ge samma manifest-id, annars delar
+# tva identiska ogonblicksbilder inte objekt.
+
+use iter
+use time
+
+define tab() -> text = text_of([9])
+
+public define rune_dir(root: text) -> text = root + "/.rune"
+
+public define is_repo(root: text) -> truth uses files:
+    is_dir(rune_dir(root)) is not 0
+
+public define init(root: text) uses files:
+    rd = rune_dir(root)
+    mkdir_all(rd + "/refs/heads")
+    write_file(rd + "/HEAD", "refs/heads/main")
+    write_file(rd + "/index", "")
+
+# --- ignorering ---------------------------------------------------------
+# En rad per monster i .runeignore. Matchningen ar prefix pa den relativa
+# sokvagen - `Saved/` tar allt darunder. Inga globbar i v1; det racker for
+# de mappar man faktiskt vill halla utanfor.
+define ignore_list(root: text) -> [text] uses files:
+    edit pats = [".rune/"]
+    f = root + "/.runeignore"
+    if file_exists(f) is not 0:
+        loop line in split(read_file(f), "\n"):
+            p = trim(line)
+            if not is_empty(p) and not starts_with(p, "#"):
+                pats = append(pats, p)
+    pats
+
+define ignored(rel: text, pats: [text]) -> truth:
+    edit hit = false
+    loop p in pats:
+        if starts_with(rel, p) or rel is trim_end_slash(p):
+            hit = true
+    hit
+
+define trim_end_slash(p: text) -> text:
+    if ends_with(p, "/") then text_of(bytes_part(bytes_of(p), 0, byte_count(p) - 1)) else p
+
+# Alla filer under `root`, som relativa sokvagar, ignorerade bortsorterade.
+public define walk(root: text) -> [text] uses files:
+    walk_at(root, "", ignore_list(root))
+
+define walk_at(root: text, rel: text, pats: [text]) -> [text] uses files:
+    here = if is_empty(rel) then root else root + "/" + rel
+    edit out = []
+    loop name in list_dir(here):
+        if not is_empty(name):
+            r = if is_empty(rel) then name else rel + "/" + name
+            if not ignored(r, pats):
+                out = append(out, r)
+    loop d in list_dirs(here):
+        if not is_empty(d):
+            r = if is_empty(rel) then d else rel + "/" + d
+            if not ignored(r + "/", pats):
+                loop deeper in walk_at(root, r, pats):
+                    out = append(out, deeper)
+    out
+
+# --- index --------------------------------------------------------------
+# Raderna ar "sokvag<TAB>blob-id". Sma hjalpare istallet for en map-typ:
+# formatet ar redan textrader pa disk, sa text in och text ut halls ihop.
+public define read_lines(path: text) -> [text] uses files:
+    if file_exists(path) is 0:
+        return []
+    edit out = []
+    loop line in split(read_file(path), "\n"):
+        if not is_empty(line):
+            out = append(out, line)
+    out
+
+public define entry_path(line: text) -> text = split(line, tab())[0]
+public define entry_blob(line: text) -> text = split(line, tab())[1]
+
+# Satt (eller ersatt) en sokvags rad, och halt listan sorterad pa sokvag.
+define put_entry(lines: [text], path: text, blob: text) -> [text]:
+    edit out = []
+    loop l in lines:
+        if entry_path(l) is not path:
+            out = append(out, l)
+    out = append(out, path + tab() + blob)
+    sorted(out, order_of{less: (a, b): a < b})
+
+# Koa EN fil: lagra innehallet, skriv sokvag -> blob-id i indexet.
+public define add(root: text, rel: text) -> text uses files:
+    blob = put_file(rune_dir(root), root + "/" + rel)
+    idx = put_entry(read_lines(rune_dir(root) + "/index"), rel, blob)
+    write_file(rune_dir(root) + "/index", join(idx, "\n"))
+    blob
+
+# --- refs och commits ---------------------------------------------------
+public define head_ref(root: text) -> text uses files:
+    read_file(rune_dir(root) + "/HEAD")
+
+public define head_commit(root: text) -> text uses files:
+    p = rune_dir(root) + "/" + head_ref(root)
+    if file_exists(p) is 0 then "" else read_file(p)
+
+public define commit(root: text, msg: text, author: text) -> text uses files, clock:
+    rd = rune_dir(root)
+    idx = read_lines(rd + "/index")
+    if length(idx) is 0:
+        return ""
+    manifest = put_object(rd, "manifests", join(idx, "\n"))
+    parent = head_commit(root)
+    par = if is_empty(parent) then "-" else parent
+    nl = text_of([10])
+    body = "parent {par}" + nl + "manifest {manifest}" + nl + "author {author}" + nl + "time {now_unix()}" + nl + nl + msg
+    id = put_object(rd, "commits", body)
+    write_file(rd + "/" + head_ref(root), id)
+    write_file(rd + "/index", "")
+    id
+
+# Ett falt ur en commit-kropp: raden som borjar med `name `, utan prefixet.
+public define commit_field(body: text, name: text) -> text:
+    edit found = ""
+    loop line in split(body, "\n"):
+        if starts_with(line, name + " ") and is_empty(found):
+            found = text_of(bytes_part(bytes_of(line), byte_count(name) + 1, byte_count(line)))
+    found
+
+public define commit_message(body: text) -> text:
+    parts = split(body, "\n\n")
+    if length(parts) < 2 then "" else join(drop_first(parts), "\n\n")
+
+define drop_first(xs: [text]) -> [text]:
+    edit out = []
+    loop i in 1 until length(xs):
+        out = append(out, xs[i])
+    out
+
+# Commit-kedjan fran HEAD och bakat, nyast forst.
+public define log(root: text) -> [text] uses files:
+    edit out = []
+    edit id = head_commit(root)
+    loop:
+        if is_empty(id) or id is "-":
+            break
+        out = append(out, id)
+        id = commit_field(get_object(rune_dir(root), "commits", id), "parent")
+    out
+
+# Manifestets rader for en commit.
+public define commit_manifest(root: text, id: text) -> [text] uses files:
+    rd = rune_dir(root)
+    m = commit_field(get_object(rd, "commits", id), "manifest")
+    if is_empty(m):
+        return []
+    edit out = []
+    loop line in split(get_object(rd, "manifests", m), "\n"):
+        if not is_empty(line):
+            out = append(out, line)
+    out
+
+# Skriv ut hela ogonblicksbilden ur en commit till arbetstradet.
+public define checkout(root: text, id: text) -> number uses files:
+    edit n = 0
+    loop line in commit_manifest(root, id):
+        get_file(rune_dir(root), entry_blob(line), root + "/" + entry_path(line))
+        n = n + 1
+    n
+
+# Blob-id for en sokvag i en radlista, "" om sokvagen inte finns dar.
+public define lookup(lines: [text], path: text) -> text:
+    edit found = ""
+    loop l in lines:
+        if entry_path(l) is path:
+            found = entry_blob(l)
+    found
+
+# Namnet som skriver commiten. Miljon, annars "okand" - ingen inloggning,
+# ingen konfigurationsfil att glomma.
+public define author_name() -> text uses env:
+    u = env("USERNAME")
+    if not is_empty(u):
+        return u
+    v = env("USER")
+    if is_empty(v) then "okand" else v
