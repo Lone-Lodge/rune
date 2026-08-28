@@ -134,10 +134,26 @@ public define blob_bytes(rune_dir: text, blob_id: text) -> text uses files:
             body = body + get_object(rune_dir, "chunks", id)
     body
 
-# Aterskapa en fil ur sitt recept.
-public define get_file(rune_dir: text, blob_id: text, out_path: text) uses files:
+# Har vi varje chunk receptet behover? En chunk ar aldrig tom, sa ett
+# saknat objekt gar att skilja fran ett tomt. Utan den har fragan skriver
+# aterskapningen en TYST trasig fil nar en chunk fattas.
+public define blob_complete(rune_dir: text, blob_id: text) -> truth uses files:
+    if not has_object(rune_dir, "blobs", blob_id):
+        return false
+    edit hel = true
+    loop id in split(get_object(rune_dir, "blobs", blob_id), "\n"):
+        if not is_empty(id) and not has_object(rune_dir, "chunks", id):
+            hel = false
+    hel
+
+# Aterskapa en fil ur sitt recept. false om nagon chunk saknas - da rors
+# filen inte alls.
+public define get_file(rune_dir: text, blob_id: text, out_path: text) -> truth uses files:
+    if not blob_complete(rune_dir, blob_id):
+        return false
     mkdir_all(path_parent(out_path))
     write_file(out_path, blob_bytes(rune_dir, blob_id))
+    true
 
 # --- repo ---------------------------------------------------------------
 # Arbetstradet ar sanningen om NUET; .rune ar sanningen om historien.
@@ -316,10 +332,16 @@ public define commit_manifest(root: text, id: text) -> [text] uses files:
     out
 
 # Skriv ut hela ogonblicksbilden ur en commit till arbetstradet.
+# Antal skrivna filer, eller -1 om nagot saknas i lagret. Vid -1 ar INGET
+# skrivet: en halv utcheckning ar varre an ingen.
 public define checkout(root: text, id: text) -> number uses files:
+    rader = commit_manifest(root, id)
+    loop line in rader:
+        if not blob_complete(rune_dir(root), entry_blob(line)):
+            return 0 - 1
     edit n = 0
-    loop line in commit_manifest(root, id):
-        get_file(rune_dir(root), entry_blob(line), root + "/" + entry_path(line))
+    loop line in rader:
+        skrev = get_file(rune_dir(root), entry_blob(line), root + "/" + entry_path(line))
         n = n + 1
     n
 

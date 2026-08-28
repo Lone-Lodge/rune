@@ -48,6 +48,7 @@ forsvinner.
 
     orbit build
     bash tools/test.sh          # hela flodet mot ett engangsrepo
+    bash tools/remote_test.sh   # server + tva klienter
 
     rune init                   # starta ett repo har
     rune add .                  # koa hela tradet
@@ -93,9 +94,38 @@ ordningen. Nasta steg for laset ar att markera latta filer skrivskyddade pa
 disk, sa Unreal sjalvt visar dem som tagna. Det kraver en ny runtime-extern
 i Orion och ligger darfor utanfor.
 
+## Remote
+
+Hela synken ar en fraga: **vilka id saknar du?** Det ar innehallsadresseringens
+utdelning. Ingen jamforelse av trad, inga deltan, ingen forhandling.
+
+    rune serve 7420             # pa maskinen som haller repot
+    rune remote http://host:7420
+    rune push                   # skickar det servern saknar
+    rune pull                   # hamtar det du saknar (ror inte arbetstradet)
+
+Matt: 3 MB binar andrad pa **en byte** kostar 4 objekt over natet - en chunk,
+dess blob, manifestet och commiten.
+
+Egen HTTP pa net-orben, inte app-orben: app splittar requesten pa `
+
+`
+och tar andra biten som kropp, sa en binar kropp som rakar innehalla den
+sekvensen kapas. Chunkar ur .uasset-filer gor det forr eller senare.
+
+**Bara snabbspolning.** Push vagrar om serverns commit inte ligger i din
+kedja, pull vagrar om du har egna commits vid sidan av. Binarer gar anda
+inte att sla ihop - det ar darfor lasen finns.
+
+Med en remote satt ar **servern sanningen om lasen**. Ett las som bara finns
+lokalt kan aldrig saga att nagon ANNAN haller filen, och da ar det ingen
+sparr utan en anteckning. Den lokala lasfilen blir en cache som `add` far
+sin sparr ur.
+
 ## Granser
 
 Filer lases hela i minnet, sa nagra hundra MB per fil. `status` hashar om
 hela arbetstradet varje gang - korrekt, men langsamt pa stora repon.
-Manifestet sorteras med en urvalssortering. Ingen remote och inga grenar.
-Inget av det andrar formatet.
+Manifestet sorteras med en urvalssortering. Inga grenar, ingen
+autentisering pa servern - den litar pa alla som kan na porten, sa den hor
+hemma bakom brandvagg eller VPN tills det finns.

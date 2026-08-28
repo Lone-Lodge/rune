@@ -1,0 +1,421 @@
+# rune_remote - servern och klienten.
+#
+# Hela synken ar en fraga: VILKA ID SAKNAR DU? Det ar innehallsadresseringens
+# hela utdelning. Ingen jamforelse av trad, inga deltan att rakna ut, ingen
+# forhandling. Klienten raknar upp vad den har, servern svarar vad den
+# saknar, och bara det gar over tradet.
+#
+# Egen HTTP pa net-orben istallet for app-orben: app splittar hela requesten
+# pa "\r\n\r\n" och tar andra biten som kropp, sa en binar kropp som RAKAR
+# innehalla den sekvensen kapas. Chunkar ar rakt innehall ur .uasset-filer
+# och gor det forr eller senare. Har lases exakt Content-Length bytes.
+#
+#   POST /have?sort=chunks   ids, en per rad   -> de servern SAKNAR
+#   GET  /obj/<sort>/<id>                      -> objektets bytes
+#   PUT  /obj/<sort>/<id>    objektets bytes
+#   GET  /ref                                  -> commit-id, "" om tomt
+#   POST /ref                "gammal\nny"      -> "ok", annars "stale <nu>"
+#   GET  /locks                                -> lasfilen som den ar
+#   POST /lock               "vag\nagare"      -> "" om din, annars hallaren
+#   POST /unlock             "vag\nagare"      -> "" om ledig, annars hallaren
+
+use rune
+use net
+use os
+use text
+use encoding
+
+define crlf() -> text = text_of([13, 10])
+define head_end() -> text = text_of([13, 10, 13, 10])
+
+# --- server -------------------------------------------------------------
+
+# Las tills hela huvudet kommit, och sedan exakt sa manga bytes kroppen
+# lovade. Returnerar [huvud, kropp]. Kroppen skivas ur BYTES, aldrig ur en
+# text-split: den kan innehalla vad som helst.
+define read_request(conn: number) -> [text] uses net:
+    edit raw = ""
+    loop:
+        if contains(raw, head_end()):
+            break
+        chunk = recv(conn, 65536)
+        if timed_out(chunk) or chunk is "":
+            return ["", ""]
+        raw = raw + chunk
+    rb = bytes_of(raw)
+    cut = find_head_end(rb)
+    head = text_of(bytes_part(rb, 0, cut))
+    edit body = bytes_part(rb, cut + 4, bytes_count(rb))
+    want = content_length(head)
+    loop:
+        if bytes_count(body) >= want:
+            break
+        more = recv(conn, 65536)
+        if timed_out(more) or more is "":
+            break
+        body = bytes_concat(body, bytes_of(more))
+    [head, text_of(bytes_part(body, 0, want))]
+
+# Offset for "\r\n\r\n" i bytes. -1 om den inte finns.
+define find_head_end(b: [number]) -> number:
+    n = bytes_count(b)
+    edit at = 0 - 1
+    loop i in 0 until n - 3:
+        if at < 0 and byte_at(b, i) is 13 and byte_at(b, i + 1) is 10 and byte_at(b, i + 2) is 13 and byte_at(b, i + 3) is 10:
+            at = i
+    at
+
+define content_length(head: text) -> number:
+    edit n = 0
+    loop line in split(head, crlf()):
+        kv = split(line, ":")
+        if length(kv) > 1 and (lower(trim(kv[0])) is "content-length"):
+            n = int_from_text(trim(kv[1]))
+    n
+
+define request_line(head: text) -> [text] = split(split(head, crlf())[0], " ")
+
+# send_raw och INTE send: net.send tar langden med strlen och kapar darfor
+# vid forsta nollbyten. Ett svar med en chunk ur en .uasset kom fram som
+# sina forsta trehundra bytes, och pullen skrev tyst en trasig fil.
+define answer(conn: number, body: text) uses net:
+    n = bytes_count(bytes_of(body))
+    head = "HTTP/1.1 200 OK" + crlf() + "Content-Length: {n}" + crlf() + "Content-Type: application/octet-stream" + crlf() + "Connection: close" + crlf() + crlf()
+    sent = send_raw(conn, head + body)
+
+# Sokvagens segment efter den ledande snedstrecket.
+define segments(path: text) -> [text]:
+    edit out = []
+    loop s in split(split(path, "?")[0], "/"):
+        if not is_empty(s):
+            out = append(out, s)
+    out
+
+define query_arg(path: text, name: text) -> text:
+    parts = split(path, "?")
+    if length(parts) < 2:
+        return ""
+    edit found = ""
+    loop pair in split(parts[1], "&"):
+        kv = split(pair, "=")
+        if length(kv) > 1 and kv[0] is name:
+            found = kv[1]
+    found
+
+# Sorterna ar en sluten lista. En sokvag utifran far aldrig valja mapp fritt.
+define known_sort(s: text) -> truth:
+    s is "chunks" or s is "blobs" or s is "manifests" or s is "commits"
+
+# Ett id maste vara 64 hex. Det ar bade en riktighetskontroll och sparret
+# mot att en sokvag klattrar ur objektmappen.
+define safe_id(id: text) -> truth:
+    b = bytes_of(id)
+    if bytes_count(b) is not 64:
+        return false
+    edit ok = true
+    loop i in 0 until 64:
+        c = byte_at(b, i)
+        if not ((c >= 48 and c <= 57) or (c >= 97 and c <= 102)):
+            ok = false
+    ok
+
+define handle(root: text, head: text, body: text) -> text uses files, clock:
+    rl = request_line(head)
+    if length(rl) < 2:
+        return ""
+    method = rl[0]
+    path = rl[1]
+    seg = segments(path)
+    rd = rune_dir(root)
+
+    if method is "POST" and length(seg) is 1 and seg[0] is "have":
+        sort = query_arg(path, "sort")
+        if not known_sort(sort):
+            return ""
+        edit saknas = []
+        loop id in split(body, "\n"):
+            t = trim(id)
+            if safe_id(t) and not has_object(rd, sort, t):
+                saknas = append(saknas, t)
+        return join(saknas, "\n")
+
+    if length(seg) is 3 and seg[0] is "obj" and known_sort(seg[1]) and safe_id(seg[2]):
+        if method is "GET":
+            return if has_object(rd, seg[1], seg[2]) then get_object(rd, seg[1], seg[2]) else ""
+        # POST och inte PUT: http-orben talar POST, och en verbsflora vore
+        # ett andra satt att gora samma sak.
+        if method is "POST":
+            # Id:t kontrolleras mot innehallet. En klient kan inte lagga nagot
+            # under ett id som inte ar dess hash - da vore lagret inte langre
+            # innehallsadresserat, bara en mapp med namn.
+            if sha256(body) is not seg[2]:
+                return "fel id"
+            skrivet = put_object(rd, seg[1], body)
+            return "ok"
+
+    if length(seg) is 1 and seg[0] is "ref":
+        if method is "GET":
+            return head_commit(root)
+        if method is "POST":
+            rader = split(body, "\n")
+            gammal = if length(rader) > 0 then trim(rader[0]) else ""
+            ny = if length(rader) > 1 then trim(rader[1]) else ""
+            nu = head_commit(root)
+            # Jamfor-och-satt: tva som pushar samtidigt far inte skriva over
+            # varandra tyst. Den som ar sen far veta det och far hamta forst.
+            if nu is not gammal:
+                return "stale {nu}"
+            if not safe_id(ny):
+                return "fel id"
+            skrivet = write_file(rd + "/" + head_ref(root), ny)
+            return "ok"
+
+    if method is "GET" and length(seg) is 1 and seg[0] is "locks":
+        return join(read_locks(root), "\n")
+
+    if method is "POST" and length(seg) is 1 and (seg[0] is "lock" or seg[0] is "unlock"):
+        rader = split(body, "\n")
+        if length(rader) < 2:
+            return "saknar vag och agare"
+        vag = trim(rader[0])
+        vem = trim(rader[1])
+        return if seg[0] is "lock" then lock(root, vag, vem) else unlock(root, vag, vem)
+
+    ""
+
+# Servera tills processen stoppas. Ett svar per uppkoppling: pushar och
+# pulls ar fa och stora, inte manga och sma, sa keep-alive vore komplexitet
+# utan vinst.
+public define serve(root: text, port: number) uses net, files, clock, console:
+    if not is_repo(root):
+        init(root)
+    srv = listen(port)
+    if srv < 0:
+        print_line("rune: kunde inte lyssna pa {port}")
+        return
+    print_line("rune serve pa {port}, repo {root}  (Ctrl+C stoppar)")
+    loop:
+        conn = accept(srv)
+        if conn >= 0:
+            timeout = set_timeout(conn, 30000)
+            hb = read_request(conn)
+            if not is_empty(hb[0]):
+                answer(conn, handle(root, hb[0], hb[1]))
+            stang = close(conn)
+
+# --- klient -------------------------------------------------------------
+
+use http
+
+public define remote_url(root: text) -> text uses files:
+    p = rune_dir(root) + "/remote"
+    if file_exists(p) is 0 then "" else trim(read_file(p))
+
+public define set_remote(root: text, url: text) uses files:
+    write_file(rune_dir(root) + "/remote", trim(url))
+
+define hamta(url: text) -> text uses net, files:
+    r = fetch(url)
+    if success(r) then r.body else ""
+
+define send_to(url: text, body: text) -> text uses net, files:
+    r = post(url, "application/octet-stream", body)
+    if success(r) then r.body else ""
+
+# De id servern saknar, av dem vi fragar om.
+define missing(url: text, sort: text, ids: [text]) -> [text] uses net, files:
+    if length(ids) is 0:
+        return []
+    edit out = []
+    loop id in split(send_to("{url}/have?sort={sort}", join(ids, "\n")), "\n"):
+        if not is_empty(trim(id)):
+            out = append(out, trim(id))
+    out
+
+# Antal skickade, eller -1 om NAGOT inte kom fram. Svaret MASTE lasas:
+# forsta versionen raknade bara varv och rapporterade en lyckad push medan
+# servern inte tog emot ett enda objekt - och satte sedan refen till en
+# commit den inte hade.
+define in_chain(kedja: [text], id: text) -> truth:
+    edit finns = false
+    loop c in kedja:
+        if c is id:
+            finns = true
+    finns
+
+define upload(url: text, rd: text, sort: text, ids: [text]) -> number uses net, files:
+    edit n = 0
+    loop id in missing(url, sort, ids):
+        if send_to("{url}/obj/{sort}/{id}", get_object(rd, sort, id)) is not "ok":
+            return 0 - 1
+        n = n + 1
+    n
+
+# Skicka allt HEAD hanger pa som servern saknar, och flytta sedan dess ref.
+#
+# Ordningen ar inte kosmetisk: chunkar fore blobbar fore manifest fore
+# commits, och commits aldst forst. Servern far darfor aldrig ligga med ett
+# objekt som pekar pa nagot den inte har, inte ens mitt i en avbruten push.
+public define skicka(root: text) -> text uses net, files, console:
+    url = remote_url(root)
+    if is_empty(url):
+        return "ingen remote satt - `rune remote <url>`"
+    rd = rune_dir(root)
+    mitt = head_commit(root)
+    if is_empty(mitt):
+        return "inget att pusha"
+    kedja = log(root)
+    # Ligger serverns commit i MIN kedja? Gor den inte det har nagon annan
+    # pushat nagot jag inte har, och min push skulle radera deras arbete ur
+    # refen. Att lasa serverns ref och skicka tillbaka den som "gammal" ar
+    # inget skydd alls - den matchar alltid. Fragan maste stallas mot mig.
+    deras = trim(hamta("{url}/ref"))
+    if not is_empty(deras) and not in_chain(kedja, deras):
+        return "servern har commits du saknar - `rune pull` forst"
+    saknade = missing(url, "commits", kedja)
+    # aldst forst
+    edit i = length(saknade) - 1
+    edit skickade = 0
+    loop:
+        if i < 0:
+            break
+        c = saknade[i]
+        man = commit_field(get_object(rd, "commits", c), "manifest")
+        rader = commit_manifest(root, c)
+        edit blobbar = []
+        loop rad in rader:
+            b = entry_blob(rad)
+            blobbar = append(blobbar, b)
+            edit chunkar = []
+            loop cid in split(get_object(rd, "blobs", b), "\n"):
+                if not is_empty(cid):
+                    chunkar = append(chunkar, cid)
+            n1 = upload(url, rd, "chunks", chunkar)
+            if n1 < 0:
+                return "avbrot: servern tog inte emot en chunk, refen ar orord"
+            skickade = skickade + n1
+        n2 = upload(url, rd, "blobs", blobbar)
+        n3 = upload(url, rd, "manifests", [man])
+        n4 = upload(url, rd, "commits", [c])
+        if n2 < 0 or n3 < 0 or n4 < 0:
+            return "avbrot: servern tog inte emot ett objekt, refen ar orord"
+        skickade = skickade + n2 + n3 + n4
+        i = i - 1
+    # `deras` och inte en ny lasning: jamfor-och-satt ska vakta mot att
+    # refen flyttade sedan jag kollade, och en fars lasning vaktar ingenting.
+    svar = send_to("{url}/ref", deras + text_of([10]) + mitt)
+    if svar is "ok" then "pushade {skickade} objekt" else "refen flyttade under pushen: {svar}"
+
+# Hamta serverns HEAD och allt den hanger pa. Ror INTE arbetstradet -
+# `rune checkout <commit>` ar ett eget, medvetet steg.
+public define pull(root: text) -> text uses net, files, console:
+    url = remote_url(root)
+    if is_empty(url):
+        return "ingen remote satt - `rune remote <url>`"
+    rd = rune_dir(root)
+    deras = trim(hamta("{url}/ref"))
+    if is_empty(deras):
+        return "servern har inget an"
+    mitt = head_commit(root)
+    if has_object(rd, "commits", deras):
+        # Vi har den redan: antingen ar vi i fas, eller sa ligger vi fore.
+        # Att satta refen anda hade flyttat oss BAKAT och tappat commits.
+        return if deras is mitt then "redan i fas" else "du ligger fore servern - `rune push`"
+    # Kedjan bakat tills nagot vi redan har, sedan hem i den ordningen.
+    edit att_hamta = []
+    edit id = deras
+    loop:
+        if is_empty(id) or id is "-" or has_object(rd, "commits", id):
+            break
+        kropp = hamta("{url}/obj/commits/{id}")
+        if is_empty(kropp):
+            return "servern saknar commit {id}"
+        att_hamta = append(att_hamta, id + text_of([9]) + kropp)
+        id = commit_field(kropp, "parent")
+    # `id` ar den forsta commit vi kande igen. Ar den inte vart HEAD har vi
+    # egna commits vid sidan av deras, och en pull som satter refen hade
+    # kastat dem. Rune snabbspolar bara - binarer gar anda inte att sla
+    # ihop, och det ar darfor lasen finns.
+    if not is_empty(mitt) and id is not mitt:
+        return "du och servern har gatt isar - dina commits ligger kvar, men rune snabbspolar bara"
+    edit hamtade = 0
+    edit i = length(att_hamta) - 1
+    loop:
+        if i < 0:
+            break
+        f = split(att_hamta[i], text_of([9]))
+        man = commit_field(f[1], "manifest")
+        hamtade = hamtade + fetch_object(url, rd, "manifests", man)
+        loop rad in split(get_object(rd, "manifests", man), "\n"):
+            if not is_empty(rad):
+                b = split(rad, text_of([9]))[1]
+                hamtade = hamtade + fetch_object(url, rd, "blobs", b)
+                loop cid in split(get_object(rd, "blobs", b), "\n"):
+                    if not is_empty(cid):
+                        hamtade = hamtade + fetch_object(url, rd, "chunks", cid)
+        skrev = put_object(rd, "commits", f[1])
+        i = i - 1
+    skrivet = write_file(rd + "/" + head_ref(root), deras)
+    "hamtade {hamtade} objekt, HEAD ar {deras}"
+
+# Hamta ett objekt vi saknar. Innehallet kontrolleras mot sitt id: det ar
+# put_object som hashar, sa ett id som inte stammer skriver fel fil och
+# upptacks har istallet for tre commits senare.
+define fetch_object(url: text, rd: text, sort: text, id: text) -> number uses net, files:
+    if has_object(rd, sort, id):
+        return 0
+    kropp = hamta("{url}/obj/{sort}/{id}")
+    if is_empty(kropp) and id is not sha256(""):
+        return 0
+    fick = put_object(rd, sort, kropp)
+    if fick is not id:
+        return 0
+    1
+
+# --- las over remoten ---------------------------------------------------
+# Med en remote satt ar SERVERN sanningen om lasen. Det ar hela poangen:
+# ett las som bara finns lokalt kan aldrig saga att nagon ANNAN haller
+# filen, och da ar det ingen sparr, bara en anteckning.
+
+public define lock_here(root: text, path: text, owner: text) -> text uses net, files, clock:
+    url = remote_url(root)
+    if is_empty(url):
+        return lock(root, path, owner)
+    trim(send_to("{url}/lock", path + text_of([10]) + owner))
+
+public define unlock_here(root: text, path: text, owner: text) -> text uses net, files:
+    url = remote_url(root)
+    if is_empty(url):
+        return unlock(root, path, owner)
+    trim(send_to("{url}/unlock", path + text_of([10]) + owner))
+
+public define locks_here(root: text) -> [text] uses net, files:
+    url = remote_url(root)
+    if is_empty(url):
+        return read_locks(root)
+    edit out = []
+    loop l in split(hamta("{url}/locks"), "\n"):
+        if not is_empty(trim(l)):
+            out = append(out, trim(l))
+    out
+
+# Vem haller sokvagen, sett darifran sanningen bor.
+public define holder_here(root: text, path: text) -> text uses net, files:
+    edit vem = ""
+    loop l in locks_here(root):
+        f = split(l, text_of([9]))
+        if f[0] is path:
+            vem = f[1]
+    vem
+
+# Hamta serverns lastabell till den lokala filen. `add` har sin sparr mot
+# den lokala tabellen (lagret kan inte natet, och ska inte kunna det), sa
+# den maste fyllas innan koandet. Cachen kan vara gammal - men servern ar
+# anda den som avgor nar nagon FORSOKER ta ett las, sa det varsta som kan
+# handa ar att man far reda pa det ett steg senare.
+public define sync_locks(root: text) -> number uses net, files:
+    if is_empty(remote_url(root)):
+        return 0
+    rader = locks_here(root)
+    skrivet = write_file(rune_dir(root) + "/locks", if length(rader) is 0 then "" else join(rader, "\n") + text_of([10]))
+    length(rader)

@@ -11,9 +11,14 @@
 #   rune lock <sokvag>           ta filen, ingen annan far koa den
 #   rune unlock <sokvag>         slapp den
 #   rune locks                   vem haller vad
+#   rune remote [url]            visa eller satt remoten
+#   rune push                    skicka det servern saknar
+#   rune pull                    hamta det du saknar (ror inte arbetstradet)
+#   rune serve [port]            servera repot for push och pull
 #   rune stat <fil>              visa chunkningen utan att lagra nagot
 
 use rune
+use rune_remote
 use os
 use text
 use time
@@ -33,8 +38,9 @@ define cmd_init() uses files, console:
         init(root())
         print_line("tomt rune-repo i .rune/")
 
-define cmd_add(what: text) uses files, console, env:
+define cmd_add(what: text) uses files, console, env, net:
     me = author_name()
+    fardsk = sync_locks(root())
     edit n = 0
     edit blocked = 0
     targets = if what is "." then walk(root()) else [what]
@@ -48,23 +54,23 @@ define cmd_add(what: text) uses files, console, env:
     if blocked > 0:
         print_line("{blocked} hoppades over - las slapps med `rune unlock`")
 
-define cmd_lock(path: text) uses files, console, clock, env:
-    held = lock(root(), path, author_name())
+define cmd_lock(path: text) uses files, console, clock, env, net:
+    held = lock_here(root(), path, author_name())
     if is_empty(held):
         print_line("last: {path}")
     else:
         print_line("redan last av {held}: {path}")
 
-define cmd_unlock(path: text) uses files, console, env:
-    held = unlock(root(), path, author_name())
+define cmd_unlock(path: text) uses files, console, env, net:
+    held = unlock_here(root(), path, author_name())
     if is_empty(held):
         print_line("slappt: {path}")
     else:
         print_line("hall av {held}, inte din att slappa: {path}")
 
-define cmd_locks() uses files, console:
+define cmd_locks() uses files, console, net:
     edit n = 0
-    loop l in read_locks(root()):
+    loop l in locks_here(root()):
         print_line("  {lock_holder(l)}  {entry_path(l)}")
         n = n + 1
     if n is 0:
@@ -91,7 +97,10 @@ define cmd_log() uses files, console:
 
 define cmd_checkout(id: text) uses files, console:
     n = checkout(root(), id)
-    print_line("skrev {n} fil(er)")
+    if n < 0:
+        print_line("lagret saknar chunkar for {id} - inget skrivet. `rune pull` forst?")
+    else:
+        print_line("skrev {n} fil(er)")
 
 define cmd_history(rel: text) uses files, console:
     edit n = 0
@@ -118,10 +127,10 @@ define cmd_stat(path: text) uses files, console:
     n = bytes_count(b)
     print_line("{path}: {n} bytes, {length(cuts)} chunkar")
 
-define main() -> number uses files, console, clock, env:
+define main() -> number uses files, console, clock, env, net:
     args = arguments()
     if length(args) < 2:
-        print_line("rune init | add | status | commit | log | checkout | history | show | lock | unlock | locks | stat")
+        print_line("rune init | add | status | commit | log | checkout | history | show | lock | unlock | locks | remote | push | pull | serve | stat")
         return 1
     cmd = args[1]
     if cmd is "init":
@@ -156,6 +165,19 @@ define main() -> number uses files, console, clock, env:
     else if cmd is "show":
         if need_repo():
             cmd_show(args[2], args[3], args[4])
+    else if cmd is "remote":
+        if need_repo():
+            if length(args) > 2:
+                set_remote(root(), args[2])
+            print_line(if is_empty(remote_url(root())) then "ingen remote satt" else remote_url(root()))
+    else if cmd is "push":
+        if need_repo():
+            print_line(skicka(root()))
+    else if cmd is "pull":
+        if need_repo():
+            print_line(pull(root()))
+    else if cmd is "serve":
+        serve(root(), if length(args) > 2 then int_from_text(args[2]) else 7420)
     else if cmd is "stat":
         cmd_stat(args[2])
     else:
