@@ -236,13 +236,6 @@ define missing(url: text, sort: text, ids: [text]) -> [text] uses net, files:
 # forsta versionen raknade bara varv och rapporterade en lyckad push medan
 # servern inte tog emot ett enda objekt - och satte sedan refen till en
 # commit den inte hade.
-define in_chain(kedja: [text], id: text) -> truth:
-    edit finns = false
-    loop c in kedja:
-        if c is id:
-            finns = true
-    finns
-
 define upload(url: text, rd: text, sort: text, ids: [text]) -> number uses net, files:
     edit n = 0
     loop id in missing(url, sort, ids):
@@ -270,7 +263,7 @@ public define skicka(root: text) -> text uses net, files, console:
     # refen. Att lasa serverns ref och skicka tillbaka den som "gammal" ar
     # inget skydd alls - den matchar alltid. Fragan maste stallas mot mig.
     deras = trim(hamta("{url}/ref"))
-    if not is_empty(deras) and not in_chain(kedja, deras):
+    if not is_empty(deras) and not has_text(kedja, deras):
         return "servern har commits du saknar - `rune pull` forst"
     saknade = missing(url, "commits", kedja)
     # aldst forst
@@ -398,15 +391,6 @@ public define locks_here(root: text) -> [text] uses net, files:
         if not is_empty(trim(l)):
             out = append(out, trim(l))
     out
-
-# Vem haller sokvagen, sett darifran sanningen bor.
-public define holder_here(root: text, path: text) -> text uses net, files:
-    edit vem = ""
-    loop l in locks_here(root):
-        f = split(l, text_of([9]))
-        if f[0] is path:
-            vem = f[1]
-    vem
 
 # Hamta serverns lastabell till den lokala filen. `add` har sin sparr mot
 # den lokala tabellen (lagret kan inte natet, och ska inte kunna det), sa

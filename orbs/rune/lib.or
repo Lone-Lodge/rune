@@ -76,7 +76,7 @@ public define chunk_offsets(b: [number]) -> [number]:
 # --- objektlagring ------------------------------------------------------
 # Ett objekt bor pa <rune>/<sort>/ab/cdef..., tva hex som mapp sa en katalog
 # aldrig far hundratusen poster.
-public define object_path(rune_dir: text, sort: text, id: text) -> text:
+define object_path(rune_dir: text, sort: text, id: text) -> text:
     head = text_of(bytes_part(bytes_of(id), 0, 2))
     rest = text_of(bytes_part(bytes_of(id), 2, byte_count(id)))
     rune_dir + "/" + sort + "/" + head + "/" + rest
@@ -99,7 +99,7 @@ public define has_object(rune_dir: text, sort: text, id: text) -> truth uses fil
 # --- filer in och ut ----------------------------------------------------
 # Lagra en fil: chunka, skriv de chunkar som saknas, skriv receptet.
 # Returnerar blob-id. Filen lases hel i minnet - v1-granns, se README.
-public define put_file(rune_dir: text, path: text) -> text uses files:
+define put_file(rune_dir: text, path: text) -> text uses files:
     b = bytes_of(read_file(path))
     cuts = chunk_offsets(b)
     edit ids = []
@@ -112,10 +112,15 @@ public define put_file(rune_dir: text, path: text) -> text uses files:
 
 # Blob-kroppen ar chunk-id, ett per rad. EN regel, delad av den som lagrar
 # och den som bara vill veta id:t - annars kan status och add glida isar.
-public define blob_body(ids: [text]) -> text = join(ids, "\n")
+define blob_body(ids: [text]) -> text = join(ids, "\n")
 
 # Blob-id for en fil UTAN att lagra nagot. Status ska inte skriva objekt.
-public define file_blob_id(path: text) -> text uses files:
+# SYSKON till put_file: samma vandring genom chunkarna, men hashar bara
+# istallet for att lagra. De sex raderna star med flit tva ganger - att
+# lyfta ut dem hade krävt en funktion som parameter, och det ar en dyrare
+# sak att lasa an duplikatet ar att underhalla. Det som VERKLIGEN maste
+# folja ats, blob-kroppens format, ar redan utbrutet i blob_body.
+define file_blob_id(path: text) -> text uses files:
     b = bytes_of(read_file(path))
     cuts = chunk_offsets(b)
     edit ids = []
@@ -127,7 +132,7 @@ public define file_blob_id(path: text) -> text uses files:
     sha256(blob_body(ids))
 
 # Innehallet bakom ett blob-id: chunkarna, i receptets ordning.
-public define blob_bytes(rune_dir: text, blob_id: text) -> text uses files:
+define blob_bytes(rune_dir: text, blob_id: text) -> text uses files:
     edit body = ""
     loop id in split(get_object(rune_dir, "blobs", blob_id), "\n"):
         if not is_empty(id):
@@ -137,7 +142,7 @@ public define blob_bytes(rune_dir: text, blob_id: text) -> text uses files:
 # Har vi varje chunk receptet behover? En chunk ar aldrig tom, sa ett
 # saknat objekt gar att skilja fran ett tomt. Utan den har fragan skriver
 # aterskapningen en TYST trasig fil nar en chunk fattas.
-public define blob_complete(rune_dir: text, blob_id: text) -> truth uses files:
+define blob_complete(rune_dir: text, blob_id: text) -> truth uses files:
     if not has_object(rune_dir, "blobs", blob_id):
         return false
     edit hel = true
@@ -148,7 +153,7 @@ public define blob_complete(rune_dir: text, blob_id: text) -> truth uses files:
 
 # Aterskapa en fil ur sitt recept. false om nagon chunk saknas - da rors
 # filen inte alls.
-public define get_file(rune_dir: text, blob_id: text, out_path: text) -> truth uses files:
+define get_file(rune_dir: text, blob_id: text, out_path: text) -> truth uses files:
     if not blob_complete(rune_dir, blob_id):
         return false
     mkdir_all(path_parent(out_path))
@@ -246,7 +251,7 @@ define walk_at(root: text, rel: text, pats: [text]) -> [text] uses files:
 # --- index --------------------------------------------------------------
 # Raderna ar "sokvag<TAB>blob-id". Sma hjalpare istallet for en map-typ:
 # formatet ar redan textrader pa disk, sa text in och text ut halls ihop.
-public define read_lines(path: text) -> [text] uses files:
+define read_lines(path: text) -> [text] uses files:
     if file_exists(path) is 0:
         return []
     edit out = []
@@ -364,7 +369,7 @@ public define checkout(root: text, id: text) -> number uses files:
     n
 
 # Blob-id for en sokvag i en radlista, "" om sokvagen inte finns dar.
-public define lookup(lines: [text], path: text) -> text:
+define lookup(lines: [text], path: text) -> text:
     edit found = ""
     loop l in lines:
         if entry_path(l) is path:
@@ -529,7 +534,9 @@ public define status(root: text) -> [text] uses files:
     write_lines(stat_path(root), fardsk)
     rows
 
-define has_text(xs: [text], v: text) -> truth:
+# Finns texten i listan? Delas med rune_remote, som annars hade haft en
+# egen kopia under ett annat namn.
+public define has_text(xs: [text], v: text) -> truth:
     edit hit = false
     loop x in xs:
         if x is v:
