@@ -11,6 +11,7 @@
 #   rune lock <sokvag>           ta filen, ingen annan far koa den
 #   rune unlock <sokvag>         slapp den
 #   rune locks                   vem haller vad
+#   rune clone <url>             init + remote + pull + checkout i ett
 #   rune remote [url]            visa eller satt remoten
 #   rune push                    skicka det servern saknar
 #   rune pull                    hamta det du saknar (ror inte arbetstradet)
@@ -130,7 +131,7 @@ define cmd_stat(path: text) uses files, console:
 define main() -> number uses files, console, clock, env, net:
     args = arguments()
     if length(args) < 2:
-        print_line("rune init | add | status | commit | log | checkout | history | show | lock | unlock | locks | remote | push | pull | serve | stat")
+        print_line("rune init | add | status | commit | log | checkout | history | show | lock | unlock | locks | clone | remote | push | pull | serve | stat")
         return 1
     cmd = args[1]
     if cmd is "init":
@@ -165,6 +166,11 @@ define main() -> number uses files, console, clock, env, net:
     else if cmd is "show":
         if need_repo():
             cmd_show(args[2], args[3], args[4])
+    else if cmd is "clone":
+        if length(args) < 3:
+            print_line("rune clone <url>")
+        else:
+            print_line(clone(root(), args[2]))
     else if cmd is "remote":
         if need_repo():
             if length(args) > 2:

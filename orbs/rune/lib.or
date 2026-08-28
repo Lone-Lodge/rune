@@ -180,6 +180,24 @@ public define init(root: text) uses files:
     mkdir_all(rd + "/refs/heads")
     write_file(rd + "/HEAD", "refs/heads/main")
     write_file(rd + "/index", "")
+    gitignorera(root)
+
+# Finns redan en git i mappen ska den inte borja spara VART lager. Raden
+# laggs bara om .gitignore saknar den; vi skriver aldrig om nagons fil mer
+# an sa. Utan det dyker .rune/ upp som ospardad i git-panelen bredvid.
+define gitignorera(root: text) uses files:
+    if is_dir(root + "/.git") is 0:
+        return
+    p = root + "/.gitignore"
+    edit fanns = ""
+    if file_exists(p) is not 0:
+        fanns = read_file(p)
+        loop l in split(fanns, "''' + BS + '''n"):
+            if trim(l) is ".rune/" or trim(l) is ".rune":
+                return
+    nl = text_of([10])
+    svans = if is_empty(fanns) or ends_with(fanns, nl) then "" else nl
+    write_file(p, fanns + svans + ".rune/" + nl)
 
 # --- ignorering ---------------------------------------------------------
 # En rad per monster i .runeignore. Matchningen ar prefix pa den relativa

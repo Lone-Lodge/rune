@@ -34,12 +34,11 @@ H_BIN=$(sha stor.bin)
 "$RUNE" add . >/dev/null; "$RUNE" commit "forsta" >/dev/null
 has "push gick igenom" "$("$RUNE" push)" "pushade"
 
-echo "== pull till tomt repo, byte for byte =="
+echo "== clone till tom mapp, byte for byte =="
 cd "$T/b"
-"$RUNE" init >/dev/null; "$RUNE" remote "$URL" >/dev/null
-has "pull hamtade" "$("$RUNE" pull)" "hamtade"
-"$RUNE" checkout "$(curl -s -m 3 "$URL/ref")" >/dev/null
+has "clone hamtade och skrev" "$("$RUNE" clone "$URL")" "skrev"
 check "3 MB binar overlevde natet" "$(sha stor.bin)" "$H_BIN"
+has "clone vagrar over ett befintligt repo" "$("$RUNE" clone "$URL")" "finns redan"
 
 echo "== inkrementell push =="
 cd "$T/a"
@@ -58,6 +57,15 @@ cd "$T/b"
 has "push vagrar nar servern gatt fore" "$("$RUNE" push)" "pull. forst"
 has "pull vagrar snabbspola over egna commits" "$("$RUNE" pull)" "gatt isar"
 check "b:s egen commit ligger kvar" "$("$RUNE" log | wc -l)" "3"
+
+echo "== init respekterar en befintlig git =="
+mkdir -p "$T/g" && cd "$T/g" && git init -q . && printf 'x
+' > f.txt
+"$RUNE" init >/dev/null
+check "init la .rune/ i .gitignore" "$(grep -c '^.rune/$' .gitignore)" "1"
+"$RUNE" init >/dev/null 2>&1
+check "andra init dubblerar inte raden" "$(grep -c '^.rune/$' .gitignore)" "1"
+cd "$T/b"
 
 echo "== las over remoten =="
 # b ar en ANNAN person. Utan det testar man bara att man far ta om sitt

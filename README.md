@@ -61,6 +61,12 @@ forsvinner.
     rune locks                  # vem haller vad
     rune stat <fil>             # visa chunkningen utan att lagra
 
+## Bredvid git
+
+`rune init` lagger `.rune/` i `.gitignore` om mappen redan har en git.
+Utan det dyker lagret upp som ospardat bredvid ditt riktiga arbete. Raden
+laggs bara om den saknas; vi skriver aldrig om nagons fil mer an sa.
+
 ## .runeignore
 
 En rad per monster, prefixmatchning pa den relativa sokvagen. `Saved/` tar
@@ -100,7 +106,7 @@ Hela synken ar en fraga: **vilka id saknar du?** Det ar innehallsadresseringens
 utdelning. Ingen jamforelse av trad, inga deltan, ingen forhandling.
 
     rune serve 7420             # pa maskinen som haller repot
-    rune remote http://host:7420
+    rune clone http://host:7420 # init + remote + pull + checkout i ett
     rune push                   # skickar det servern saknar
     rune pull                   # hamtar det du saknar (ror inte arbetstradet)
 

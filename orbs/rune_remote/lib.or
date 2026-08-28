@@ -419,3 +419,22 @@ public define sync_locks(root: text) -> number uses net, files:
     rader = locks_here(root)
     skrivet = write_file(rune_dir(root) + "/locks", if length(rader) is 0 then "" else join(rader, "\n") + text_of([10]))
     length(rader)
+
+# Ett steg istallet for fyra. Utan den ar "hamta hem repot" init, remote,
+# pull och checkout i ratt ordning, och fel ordning ger ett tomt trad utan
+# att saga varfor.
+#
+# Vagrar mot en mapp som redan har ett repo: att blanda tva historier i
+# samma .rune ar inget nagon menar.
+public define clone(root: text, url: text) -> text uses net, files, console:
+    if is_repo(root):
+        return "har finns redan ett rune-repo"
+    init(root)
+    set_remote(root, url)
+    svar = pull(root)
+    if not starts_with(svar, "hamtade"):
+        return svar
+    n = checkout(root, head_commit(root))
+    if n < 0:
+        return "hamtade allt men lagret var ofullstandigt - inget skrevs"
+    "{svar}, skrev {n} fil(er)"
