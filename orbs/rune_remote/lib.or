@@ -163,11 +163,17 @@ define bearer(head: text) -> text:
 # send_raw och INTE send: net.send tar langden med strlen och kapar darfor
 # vid forsta nollbyten. Ett svar med en chunk ur en .uasset kom fram som
 # sina forsta trehundra bytes, och pullen skrev tyst en trasig fil.
-define answer_code(conn: number, code: number, reason: text, bitar: [text]) uses net:
+# Bad klienten om att fa halla linan? Vi haller den bara da - en klient
+# som inte vantar sig det skulle bli stangd i vantan pa ett svar som
+# aldrig kommer.
+define vill_leva(head: text) -> truth:
+    lower(header_value(head, "connection")) is "keep-alive"
+
+define answer_code(conn: number, code: number, reason: text, bitar: [text], lever: truth) uses net:
     edit n = 0
     loop b in bitar:
         n = n + bytes_count(b)
-    head = "HTTP/1.1 {code} {reason}" + crlf() + "Content-Length: {n}" + crlf() + "Content-Type: application/octet-stream" + crlf() + "Connection: close" + crlf() + crlf()
+    head = "HTTP/1.1 {code} {reason}" + crlf() + "Content-Length: {n}" + crlf() + "Content-Type: application/octet-stream" + crlf() + "Connection: " + (if lever then "keep-alive" else "close") + crlf() + crlf()
     sent = send_raw(conn, head)
     # En bit i taget ut. Att foga ihop dem forst hade byggt hela svaret i
     # minnet igen, och det var precis det bitarna finns for att slippa.
@@ -422,13 +428,24 @@ public define serve(root: text, port: number) uses net, files, clock, console:
         conn = accept(srv)
         if conn >= 0:
             timeout = set_timeout(conn, 30000)
-            req = read_request(conn, root)
-            if not is_empty(req.head):
+            # FLERA requests per uppkoppling nar klienten ber om det. En
+            # push av 30 MB ar over femhundra objekt; en uppkoppling per
+            # objekt var tio millisekunder styck och det mesta av tiden.
+            # Servern tar anda en klient i taget - den som haller linan
+            # haller den ocksa for alla andra.
+            loop:
+                req = read_request(conn, root)
+                if is_empty(req.head):
+                    break
+                edit lever = false
                 if secret_ok(root, bearer(req.head)):
                     sv = handle(root, req)
-                    answer_code(conn, sv.kod, reason_of(sv.kod), sv.bitar)
+                    lever = vill_leva(req.head)
+                    answer_code(conn, sv.kod, reason_of(sv.kod), sv.bitar, lever)
                 else:
-                    answer_code(conn, 401, "Unauthorized", ["fel eller saknad hemlighet"])
+                    answer_code(conn, 401, "Unauthorized", ["fel eller saknad hemlighet"], false)
+                if not lever:
+                    break
             stang = close(conn)
 
 # --- klient -------------------------------------------------------------
@@ -498,6 +515,14 @@ define read_reply(c: number) -> reply uses net:
     hel = join(bitar, "")
     reply{status: status_of(head), body: if har > want then text_of(bytes_part(bytes_of(hel), 0, want)) else hel}
 
+define skicka_pa(c: number, d: [text], method: text, hdr: [text], body: text, lever: truth) uses net:
+    edit huvud = "{method} {d[2]} HTTP/1.1" + crlf() + "Host: {d[0]}" + crlf() + "Content-Length: {bytes_count(body)}" + crlf() + "Connection: " + (if lever then "keep-alive" else "close") + crlf()
+    loop h in hdr:
+        huvud = huvud + h + crlf()
+    skickat = send_raw(c, huvud + crlf())
+    if not is_empty(body):
+        skickade = send_raw(c, body)
+
 define native(url: text, method: text, hdr: [text], body: text) -> reply uses net:
     d = url_parts(url)
     c = connect_within(d[0], int_from_text(d[1]), 5000)
@@ -505,12 +530,35 @@ define native(url: text, method: text, hdr: [text], body: text) -> reply uses ne
         return reply{status: 0, body: "nadde inte {d[0]}:{d[1]}"}
     defer close(c)
     tid = set_timeout(c, 30000)
-    edit huvud = "{method} {d[2]} HTTP/1.1" + crlf() + "Host: {d[0]}" + crlf() + "Content-Length: {bytes_count(body)}" + crlf() + "Connection: close" + crlf()
-    loop h in hdr:
-        huvud = huvud + h + crlf()
-    skickat = send_raw(c, huvud + crlf())
-    if not is_empty(body):
-        skickade = send_raw(c, body)
+    skicka_pa(c, d, method, hdr, body, false)
+    read_reply(c)
+
+# --- linan ---------------------------------------------------------------
+# En uppkoppling som halls oppen over MANGA objekt. En push av 30 MB ar
+# over femhundra objekt, och en uppkoppling per objekt var tio
+# millisekunder styck - alltsa det mesta av tiden.
+#
+# -1 betyder INGEN lina: adressen ar https, eller uppkopplingen gick inte
+# att oppna. Da faller varje anrop tillbaka pa en uppkoppling per request
+# precis som forut, sa den som anropar behover inte veta vilket det blev.
+define oppna_lina(url: text) -> number uses net:
+    if not is_plain(url):
+        return 0 - 1
+    d = url_parts(url)
+    c = connect_within(d[0], int_from_text(d[1]), 5000)
+    if not ok(c):
+        return 0 - 1
+    tid = set_timeout(c, 30000)
+    c
+
+define stang_lina(c: number) uses net:
+    if c >= 0:
+        stang = close(c)
+
+define pa_lina(c: number, root: text, url: text, method: text, body: text) -> reply uses net, files:
+    if c < 0:
+        return if method is "GET" then get_reply(root, url) else post_reply(root, url, body)
+    skicka_pa(c, url_parts(url), method, auth(root), body, true)
     read_reply(c)
 
 # Hemligheten gar som HUVUD och aldrig i sokvagen: en URL hamnar i loggar
@@ -538,8 +586,8 @@ define send_to(root: text, url: text, body: text) -> text uses net, files:
 # Serverns ref, eller ett meddelande som borjar med "!". Varje operation
 # borjar anda med den har fragan, sa det ar dar ett nej hor hemma - annars
 # blir ett 401 tyst till "servern har inget an".
-define ask_ref(root: text, url: text) -> text uses net, files:
-    r = get_reply(root, "{url}/ref")
+define ask_ref(lina: number, root: text, url: text) -> text uses net, files:
+    r = pa_lina(lina, root, "{url}/ref", "GET", "")
     if r.status is 401:
         return "!fel eller saknad hemlighet - `rune secret <varde>`"
     if not success(r):
@@ -547,11 +595,12 @@ define ask_ref(root: text, url: text) -> text uses net, files:
     trim(r.body)
 
 # De id servern saknar, av dem vi fragar om.
-define missing(root: text, url: text, sort: text, ids: [text]) -> [text] uses net, files:
+define missing(lina: number, root: text, url: text, sort: text, ids: [text]) -> [text] uses net, files:
     if length(ids) is 0:
         return []
     edit out = []
-    loop id in split(send_to(root, "{url}/have?sort={sort}", join(ids, "\n")), "\n"):
+    r = pa_lina(lina, root, "{url}/have?sort={sort}", "POST", join(ids, "\n"))
+    loop id in split(if success(r) then r.body else "", "\n"):
         if not is_empty(trim(id)):
             out = append(out, trim(id))
     out
@@ -560,10 +609,11 @@ define missing(root: text, url: text, sort: text, ids: [text]) -> [text] uses ne
 # forsta versionen raknade bara varv och rapporterade en lyckad push medan
 # servern inte tog emot ett enda objekt - och satte sedan refen till en
 # commit den inte hade.
-define upload(root: text, url: text, rd: text, sort: text, ids: [text]) -> number uses net, files:
+define upload(lina: number, root: text, url: text, rd: text, sort: text, ids: [text]) -> number uses net, files:
     edit n = 0
-    loop id in missing(root, url, sort, ids):
-        if send_to(root, "{url}/obj/{sort}/{id}", get_object(rd, sort, id)) is not "ok":
+    loop id in missing(lina, root, url, sort, ids):
+        svar = pa_lina(lina, root, "{url}/obj/{sort}/{id}", "POST", get_object(rd, sort, id))
+        if not success(svar) or svar.body is not "ok":
             return 0 - 1
         n = n + 1
     n
@@ -581,17 +631,23 @@ public define skicka(root: text) -> text uses net, files, console:
     mitt = head_commit(root)
     if is_empty(mitt):
         return "inget att pusha"
+    # EN uppkoppling for hela pushen, oppnad FORE forsta fragan. Servern
+    # tar en uppkoppling i taget, sa en andra samtidig hade vantat pa att
+    # den forsta slapper - och den forsta vantar pa svar. Allt harifran
+    # och ner maste ga over linan.
+    lina = oppna_lina(url)
+    defer stang_lina(lina)
     kedja = log(root)
     # Ligger serverns commit i MIN kedja? Gor den inte det har nagon annan
     # pushat nagot jag inte har, och min push skulle radera deras arbete ur
     # refen. Att lasa serverns ref och skicka tillbaka den som "gammal" ar
     # inget skydd alls - den matchar alltid. Fragan maste stallas mot mig.
-    deras = ask_ref(root, url)
+    deras = ask_ref(lina, root, url)
     if starts_with(deras, "!"):
         return text_of(bytes_part(bytes_of(deras), 1, byte_count(deras)))
     if not is_empty(deras) and not has_text(kedja, deras):
         return "servern har commits du saknar - `rune pull` forst"
-    saknade = missing(root, url, "commits", kedja)
+    saknade = missing(lina, root, url, "commits", kedja)
     # aldst forst
     edit i = length(saknade) - 1
     edit skickade = 0
@@ -609,20 +665,21 @@ public define skicka(root: text) -> text uses net, files, console:
             loop cid in split(get_object(rd, "blobs", b), "\n"):
                 if not is_empty(cid):
                     chunkar = append(chunkar, cid)
-            n1 = upload(root, url, rd, "chunks", chunkar)
+            n1 = upload(lina, root, url, rd, "chunks", chunkar)
             if n1 < 0:
                 return "avbrot: servern tog inte emot en chunk, refen ar orord"
             skickade = skickade + n1
-        n2 = upload(root, url, rd, "blobs", blobbar)
-        n3 = upload(root, url, rd, "manifests", [man])
-        n4 = upload(root, url, rd, "commits", [c])
+        n2 = upload(lina, root, url, rd, "blobs", blobbar)
+        n3 = upload(lina, root, url, rd, "manifests", [man])
+        n4 = upload(lina, root, url, rd, "commits", [c])
         if n2 < 0 or n3 < 0 or n4 < 0:
             return "avbrot: servern tog inte emot ett objekt, refen ar orord"
         skickade = skickade + n2 + n3 + n4
         i = i - 1
     # `deras` och inte en ny lasning: jamfor-och-satt ska vakta mot att
     # refen flyttade sedan jag kollade, och en fars lasning vaktar ingenting.
-    svar = send_to(root, "{url}/ref", deras + text_of([10]) + mitt)
+    r_ref = pa_lina(lina, root, "{url}/ref", "POST", deras + text_of([10]) + mitt)
+    svar = if success(r_ref) then r_ref.body else ""
     if svar is "ok" then "pushade {skickade} objekt" else "refen flyttade under pushen: {svar}"
 
 # Hamta serverns HEAD och allt den hanger pa. Ror INTE arbetstradet -
@@ -632,7 +689,10 @@ public define pull(root: text) -> text uses net, files, console, env:
     if is_empty(url):
         return "ingen remote satt - `rune remote <url>`"
     rd = rune_dir(root)
-    deras = ask_ref(root, url)
+    # EN uppkoppling for hela pullen. Se `linan`.
+    lina = oppna_lina(url)
+    defer stang_lina(lina)
+    deras = ask_ref(lina, root, url)
     if starts_with(deras, "!"):
         return text_of(bytes_part(bytes_of(deras), 1, byte_count(deras)))
     if is_empty(deras):
@@ -654,7 +714,8 @@ public define pull(root: text) -> text uses net, files, console, env:
     loop:
         if is_empty(id) or id is "-" or has_object(rd, "commits", id):
             break
-        kropp = hamta(root, "{url}/obj/commits/{id}")
+        r_c = pa_lina(lina, root, "{url}/obj/commits/{id}", "GET", "")
+        kropp = if success(r_c) then r_c.body else ""
         if is_empty(kropp):
             return "servern saknar commit {id}"
         att_hamta = append(att_hamta, id + text_of([9]) + kropp)
@@ -672,14 +733,14 @@ public define pull(root: text) -> text uses net, files, console, env:
             break
         f = split(att_hamta[i], text_of([9]))
         man = commit_field(f[1], "manifest")
-        hamtade = hamtade + fetch_object(root, url, rd, "manifests", man)
+        hamtade = hamtade + fetch_object(lina, root, url, rd, "manifests", man)
         loop rad in split(get_object(rd, "manifests", man), "\n"):
             if not is_empty(rad):
                 b = split(rad, text_of([9]))[1]
-                hamtade = hamtade + fetch_object(root, url, rd, "blobs", b)
+                hamtade = hamtade + fetch_object(lina, root, url, rd, "blobs", b)
                 loop cid in split(get_object(rd, "blobs", b), "\n"):
                     if not is_empty(cid):
-                        hamtade = hamtade + fetch_object(root, url, rd, "chunks", cid)
+                        hamtade = hamtade + fetch_object(lina, root, url, rd, "chunks", cid)
         skrev = put_object(rd, "commits", f[1])
         i = i - 1
     skrivet = write_file(rd + "/" + head_ref(root), deras)
@@ -695,10 +756,11 @@ public define pull(root: text) -> text uses net, files, console, env:
 # Hamta ett objekt vi saknar. Innehallet kontrolleras mot sitt id: det ar
 # put_object som hashar, sa ett id som inte stammer skriver fel fil och
 # upptacks har istallet for tre commits senare.
-define fetch_object(root: text, url: text, rd: text, sort: text, id: text) -> number uses net, files:
+define fetch_object(lina: number, root: text, url: text, rd: text, sort: text, id: text) -> number uses net, files:
     if has_object(rd, sort, id):
         return 0
-    kropp = hamta(root, "{url}/obj/{sort}/{id}")
+    r = pa_lina(lina, root, "{url}/obj/{sort}/{id}", "GET", "")
+    kropp = if success(r) then r.body else ""
     if is_empty(kropp) and id is not sha256(""):
         return 0
     fick = put_object(rd, sort, kropp)

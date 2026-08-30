@@ -162,17 +162,24 @@ Klienten talar HTTP sjalv over net-orben, precis som servern gor. Skalet
 ar matt: http-orben startar en curl-PROCESS per request, och en push av
 30 MB ar 553 objekt.
 
-    push 30 MB     25,0 s  ->  5,8 s
-    clone 30 MB                6,5 s
+Sedan var det uppkopplingen sjalv. Servern gav ett svar per uppkoppling,
+sa en push oppnade over femhundra stycken a ungefar tio millisekunder.
+Nu haller en push eller en pull EN uppkoppling hela vagen.
+
+    push 30 MB     25,0 s  ->  5,8 s  ->  1,6 s
+    clone 30 MB              6,5 s  ->  1,7 s
 
 En https-adress gar fortfarande till http-orben, som har curl och darmed
 TLS. Rune:s egen server talar inte TLS, sa den vagen finns bara for den
-som satt en proxy framfor.
+som satt en proxy framfor - och over den finns ingen lina, utan varje
+anrop tar en egen uppkoppling som forut.
 
-Det som ar kvar ar UPPKOPPLINGEN: servern ger ett svar per uppkoppling,
-sa en push oppnar 553 stycken, ungefar tio millisekunder var. Keep-alive
-skulle ta bort det, men det ar en verklig andring av vem som ager en
-uppkoppling och inte en justering.
+**Foljden ar att servern tar en push i taget.** Den gjorde det redan -
+den svarar en uppkoppling i taget - men nu haller en push linan hela
+vagen i stallet for att slappa mellan varje objekt. Den som pushar 1 GB
+later alltsa nagon annan vanta. Sockeln har trettio sekunders timeout, sa
+en klient som dor mitt i slapper servern igen, men det ar allt som skyddar
+och det ar uttalat.
 
 Egen HTTP pa net-orben, inte app-orben: app splittar requesten pa `
 
