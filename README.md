@@ -124,8 +124,9 @@ i Orion och ligger darfor utanfor.
 Hela synken ar en fraga: **vilka id saknar du?** Det ar innehallsadresseringens
 utdelning. Ingen jamforelse av trad, inga deltan, ingen forhandling.
 
+    rune secret <varde>         # den delade hemligheten for det har repot
     rune serve 7420             # pa maskinen som haller repot
-    rune clone http://host:7420 # init + remote + pull + checkout i ett
+    rune clone <url> <hemlighet>    # init + remote + hemlighet + pull i ett
     rune push                   # skickar det servern saknar
     rune pull                   # hamtar det du saknar OCH skriver arbetstradet
 
@@ -151,6 +152,22 @@ for att sta i det.
 **Bara snabbspolning.** Push vagrar om serverns commit inte ligger i din
 kedja, pull vagrar om du har egna commits vid sidan av. Binarer gar anda
 inte att sla ihop - det ar darfor lasen finns.
+
+## Hemligheten
+
+Servern kraver en delad hemlighet och vagrar starta utan en. Den bor i
+`.rune/secret`, alltsa i mappen git redan haller utanfor, och gar over
+natet som ett `Authorization`-huvud - aldrig i sokvagen, for en URL hamnar
+i loggar och i kommandoradshistorik. http-orben skickar huvuden genom en
+konfigfil, sa den syns inte heller for den som listar processer.
+
+Hemligheten ar en **dorrnyckel, inte en identitet**. Den sager att du far
+tala med servern, inte VEM du ar. Lasen bar fortfarande ett namn som
+klienten sjalv anger, sa den som har nyckeln kan ange vilket namn som
+helst. Det racker for ett lag som redan litar pa varandra. Det racker inte
+mot oppna natet, och det ar inte heller krypterat - en avlyssnare pa
+vagen ser bade hemligheten och innehallet. Bakom brandvagg eller VPN, med
+andra ord, men nu med en dorr i stallet for ett halt i vaggen.
 
 Med en remote satt ar **servern sanningen om lasen**. Ett las som bara finns
 lokalt kan aldrig saga att nagon ANNAN haller filen, och da ar det ingen

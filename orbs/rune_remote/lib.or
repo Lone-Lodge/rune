@@ -65,23 +65,60 @@ define find_head_end(b: [number]) -> number:
             at = i
     at
 
-define content_length(head: text) -> number:
-    edit n = 0
+# Ett huvudes varde, "" om det saknas. Allt EFTER forsta kolonet, sa ett
+# varde som sjalvt innehaller kolon overlever.
+define header_value(head: text, name: text) -> text:
+    edit found = ""
     loop line in split(head, crlf()):
         kv = split(line, ":")
-        if length(kv) > 1 and (lower(trim(kv[0])) is "content-length"):
-            n = int_from_text(trim(kv[1]))
-    n
+        if length(kv) > 1 and lower(trim(kv[0])) is name and is_empty(found):
+            found = trim(text_of(bytes_part(bytes_of(line), byte_count(kv[0]) + 1, byte_count(line))))
+    found
+
+define content_length(head: text) -> number:
+    v = header_value(head, "content-length")
+    if is_empty(v) then 0 else int_from_text(v)
 
 define request_line(head: text) -> [text] = split(split(head, crlf())[0], " ")
+
+# --- hemligheten --------------------------------------------------------
+# En delad hemlighet per repo. Den ar en DORRNYCKEL och inte en identitet:
+# den sager att du far tala med servern, inte VEM du ar. Lasen bar
+# fortfarande ett namn som klienten sjalv anger, sa den som har nyckeln kan
+# ange vilket namn som helst. Det racker for ett lag som redan litar pa
+# varandra. Det racker inte mot oppna natet.
+#
+# Bor i .rune/secret, alltsa i mappen git redan haller utanfor.
+
+define secret_path(root: text) -> text = rune_dir(root) + "/secret"
+
+public define secret(root: text) -> text uses files:
+    p = secret_path(root)
+    if file_exists(p) is 0 then "" else trim(read_file(p))
+
+public define set_secret(root: text, s: text) uses files:
+    write_file(secret_path(root), trim(s))
+
+# Jamfor HASHARNA och inte varden: bada blir da lika langa, sa langden pa
+# den ratta hemligheten lacker inte ut genom nar ett nej kommer.
+define secret_ok(root: text, given: text) -> truth uses files:
+    sha256(given) is sha256(secret(root))
+
+# "Bearer xyz" -> "xyz".
+define bearer(head: text) -> text:
+    v = header_value(head, "authorization")
+    if starts_with(v, "Bearer ") then trim(text_of(bytes_part(bytes_of(v), 7, byte_count(v)))) else ""
 
 # send_raw och INTE send: net.send tar langden med strlen och kapar darfor
 # vid forsta nollbyten. Ett svar med en chunk ur en .uasset kom fram som
 # sina forsta trehundra bytes, och pullen skrev tyst en trasig fil.
-define answer(conn: number, body: text) uses net:
+define answer_code(conn: number, code: number, reason: text, body: text) uses net:
     n = bytes_count(bytes_of(body))
-    head = "HTTP/1.1 200 OK" + crlf() + "Content-Length: {n}" + crlf() + "Content-Type: application/octet-stream" + crlf() + "Connection: close" + crlf() + crlf()
+    head = "HTTP/1.1 {code} {reason}" + crlf() + "Content-Length: {n}" + crlf() + "Content-Type: application/octet-stream" + crlf() + "Connection: close" + crlf() + crlf()
     sent = send_raw(conn, head + body)
+
+define answer(conn: number, body: text) uses net:
+    answer_code(conn, 200, "OK", body)
 
 # Sokvagens segment efter den ledande snedstrecket.
 define segments(path: text) -> [text]:
@@ -189,6 +226,10 @@ define handle(root: text, head: text, body: text) -> text uses files, clock:
 public define serve(root: text, port: number) uses net, files, clock, console:
     if not is_repo(root):
         init(root)
+    if is_empty(secret(root)):
+        print_line("rune: ingen hemlighet satt for det har repot - `rune secret <varde>`")
+        print_line("      utan den litar servern pa alla som nar porten.")
+        return
     srv = listen(port)
     if srv < 0:
         print_line("rune: kunde inte lyssna pa {port}")
@@ -200,7 +241,10 @@ public define serve(root: text, port: number) uses net, files, clock, console:
             timeout = set_timeout(conn, 30000)
             hb = read_request(conn)
             if not is_empty(hb[0]):
-                answer(conn, handle(root, hb[0], hb[1]))
+                if secret_ok(root, bearer(hb[0])):
+                    answer(conn, handle(root, hb[0], hb[1]))
+                else:
+                    answer_code(conn, 401, "Unauthorized", "fel eller saknad hemlighet")
             stang = close(conn)
 
 # --- klient -------------------------------------------------------------
@@ -214,20 +258,39 @@ public define remote_url(root: text) -> text uses files:
 public define set_remote(root: text, url: text) uses files:
     write_file(rune_dir(root) + "/remote", trim(url))
 
-define hamta(url: text) -> text uses net, files:
-    r = fetch(url)
+# Hemligheten gar som HUVUD och aldrig i sokvagen: en URL hamnar i loggar
+# och i kommandoradshistorik, ett huvud gor det inte. http-orben skickar
+# huvuden genom en konfigfil, sa den syns inte heller for den som listar
+# processer.
+define auth(root: text) -> [text] uses files:
+    s = secret(root)
+    if is_empty(s) then [] else ["Authorization: Bearer {s}"]
+
+define hamta(root: text, url: text) -> text uses net, files:
+    r = fetch_with(url, auth(root))
     if success(r) then r.body else ""
 
-define send_to(url: text, body: text) -> text uses net, files:
-    r = post(url, "application/octet-stream", body)
+define send_to(root: text, url: text, body: text) -> text uses net, files:
+    r = post_with(url, "application/octet-stream", body, auth(root))
     if success(r) then r.body else ""
+
+# Serverns ref, eller ett meddelande som borjar med "!". Varje operation
+# borjar anda med den har fragan, sa det ar dar ett nej hor hemma - annars
+# blir ett 401 tyst till "servern har inget an".
+define ask_ref(root: text, url: text) -> text uses net, files:
+    r = fetch_with("{url}/ref", auth(root))
+    if r.status is 401:
+        return "!fel eller saknad hemlighet - `rune secret <varde>`"
+    if not success(r):
+        return "!nadde inte servern: {trim(r.body)}"
+    trim(r.body)
 
 # De id servern saknar, av dem vi fragar om.
-define missing(url: text, sort: text, ids: [text]) -> [text] uses net, files:
+define missing(root: text, url: text, sort: text, ids: [text]) -> [text] uses net, files:
     if length(ids) is 0:
         return []
     edit out = []
-    loop id in split(send_to("{url}/have?sort={sort}", join(ids, "\n")), "\n"):
+    loop id in split(send_to(root, "{url}/have?sort={sort}", join(ids, "\n")), "\n"):
         if not is_empty(trim(id)):
             out = append(out, trim(id))
     out
@@ -236,10 +299,10 @@ define missing(url: text, sort: text, ids: [text]) -> [text] uses net, files:
 # forsta versionen raknade bara varv och rapporterade en lyckad push medan
 # servern inte tog emot ett enda objekt - och satte sedan refen till en
 # commit den inte hade.
-define upload(url: text, rd: text, sort: text, ids: [text]) -> number uses net, files:
+define upload(root: text, url: text, rd: text, sort: text, ids: [text]) -> number uses net, files:
     edit n = 0
-    loop id in missing(url, sort, ids):
-        if send_to("{url}/obj/{sort}/{id}", get_object(rd, sort, id)) is not "ok":
+    loop id in missing(root, url, sort, ids):
+        if send_to(root, "{url}/obj/{sort}/{id}", get_object(rd, sort, id)) is not "ok":
             return 0 - 1
         n = n + 1
     n
@@ -262,10 +325,12 @@ public define skicka(root: text) -> text uses net, files, console:
     # pushat nagot jag inte har, och min push skulle radera deras arbete ur
     # refen. Att lasa serverns ref och skicka tillbaka den som "gammal" ar
     # inget skydd alls - den matchar alltid. Fragan maste stallas mot mig.
-    deras = trim(hamta("{url}/ref"))
+    deras = ask_ref(root, url)
+    if starts_with(deras, "!"):
+        return text_of(bytes_part(bytes_of(deras), 1, byte_count(deras)))
     if not is_empty(deras) and not has_text(kedja, deras):
         return "servern har commits du saknar - `rune pull` forst"
-    saknade = missing(url, "commits", kedja)
+    saknade = missing(root, url, "commits", kedja)
     # aldst forst
     edit i = length(saknade) - 1
     edit skickade = 0
@@ -283,20 +348,20 @@ public define skicka(root: text) -> text uses net, files, console:
             loop cid in split(get_object(rd, "blobs", b), "\n"):
                 if not is_empty(cid):
                     chunkar = append(chunkar, cid)
-            n1 = upload(url, rd, "chunks", chunkar)
+            n1 = upload(root, url, rd, "chunks", chunkar)
             if n1 < 0:
                 return "avbrot: servern tog inte emot en chunk, refen ar orord"
             skickade = skickade + n1
-        n2 = upload(url, rd, "blobs", blobbar)
-        n3 = upload(url, rd, "manifests", [man])
-        n4 = upload(url, rd, "commits", [c])
+        n2 = upload(root, url, rd, "blobs", blobbar)
+        n3 = upload(root, url, rd, "manifests", [man])
+        n4 = upload(root, url, rd, "commits", [c])
         if n2 < 0 or n3 < 0 or n4 < 0:
             return "avbrot: servern tog inte emot ett objekt, refen ar orord"
         skickade = skickade + n2 + n3 + n4
         i = i - 1
     # `deras` och inte en ny lasning: jamfor-och-satt ska vakta mot att
     # refen flyttade sedan jag kollade, och en fars lasning vaktar ingenting.
-    svar = send_to("{url}/ref", deras + text_of([10]) + mitt)
+    svar = send_to(root, "{url}/ref", deras + text_of([10]) + mitt)
     if svar is "ok" then "pushade {skickade} objekt" else "refen flyttade under pushen: {svar}"
 
 # Hamta serverns HEAD och allt den hanger pa. Ror INTE arbetstradet -
@@ -306,7 +371,9 @@ public define pull(root: text) -> text uses net, files, console:
     if is_empty(url):
         return "ingen remote satt - `rune remote <url>`"
     rd = rune_dir(root)
-    deras = trim(hamta("{url}/ref"))
+    deras = ask_ref(root, url)
+    if starts_with(deras, "!"):
+        return text_of(bytes_part(bytes_of(deras), 1, byte_count(deras)))
     if is_empty(deras):
         return "servern har inget an"
     # Ett smutsigt trad forst av allt: pull skriver over arbetstradet nar
@@ -326,7 +393,7 @@ public define pull(root: text) -> text uses net, files, console:
     loop:
         if is_empty(id) or id is "-" or has_object(rd, "commits", id):
             break
-        kropp = hamta("{url}/obj/commits/{id}")
+        kropp = hamta(root, "{url}/obj/commits/{id}")
         if is_empty(kropp):
             return "servern saknar commit {id}"
         att_hamta = append(att_hamta, id + text_of([9]) + kropp)
@@ -344,14 +411,14 @@ public define pull(root: text) -> text uses net, files, console:
             break
         f = split(att_hamta[i], text_of([9]))
         man = commit_field(f[1], "manifest")
-        hamtade = hamtade + fetch_object(url, rd, "manifests", man)
+        hamtade = hamtade + fetch_object(root, url, rd, "manifests", man)
         loop rad in split(get_object(rd, "manifests", man), "\n"):
             if not is_empty(rad):
                 b = split(rad, text_of([9]))[1]
-                hamtade = hamtade + fetch_object(url, rd, "blobs", b)
+                hamtade = hamtade + fetch_object(root, url, rd, "blobs", b)
                 loop cid in split(get_object(rd, "blobs", b), "\n"):
                     if not is_empty(cid):
-                        hamtade = hamtade + fetch_object(url, rd, "chunks", cid)
+                        hamtade = hamtade + fetch_object(root, url, rd, "chunks", cid)
         skrev = put_object(rd, "commits", f[1])
         i = i - 1
     skrivet = write_file(rd + "/" + head_ref(root), deras)
@@ -365,10 +432,10 @@ public define pull(root: text) -> text uses net, files, console:
 # Hamta ett objekt vi saknar. Innehallet kontrolleras mot sitt id: det ar
 # put_object som hashar, sa ett id som inte stammer skriver fel fil och
 # upptacks har istallet for tre commits senare.
-define fetch_object(url: text, rd: text, sort: text, id: text) -> number uses net, files:
+define fetch_object(root: text, url: text, rd: text, sort: text, id: text) -> number uses net, files:
     if has_object(rd, sort, id):
         return 0
-    kropp = hamta("{url}/obj/{sort}/{id}")
+    kropp = hamta(root, "{url}/obj/{sort}/{id}")
     if is_empty(kropp) and id is not sha256(""):
         return 0
     fick = put_object(rd, sort, kropp)
@@ -385,20 +452,20 @@ public define lock_here(root: text, path: text, owner: text) -> text uses net, f
     url = remote_url(root)
     if is_empty(url):
         return lock(root, path, owner)
-    trim(send_to("{url}/lock", path + text_of([10]) + owner))
+    trim(send_to(root, "{url}/lock", path + text_of([10]) + owner))
 
 public define unlock_here(root: text, path: text, owner: text) -> text uses net, files:
     url = remote_url(root)
     if is_empty(url):
         return unlock(root, path, owner)
-    trim(send_to("{url}/unlock", path + text_of([10]) + owner))
+    trim(send_to(root, "{url}/unlock", path + text_of([10]) + owner))
 
 public define locks_here(root: text) -> [text] uses net, files:
     url = remote_url(root)
     if is_empty(url):
         return read_locks(root)
     edit out = []
-    loop l in split(hamta("{url}/locks"), "\n"):
+    loop l in split(hamta(root, "{url}/locks"), "\n"):
         if not is_empty(trim(l)):
             out = append(out, trim(l))
     out
@@ -421,15 +488,15 @@ public define sync_locks(root: text) -> number uses net, files:
 #
 # Vagrar mot en mapp som redan har ett repo: att blanda tva historier i
 # samma .rune ar inget nagon menar.
-public define clone(root: text, url: text) -> text uses net, files, console:
+public define clone(root: text, url: text, hemlig: text) -> text uses net, files, console:
     if is_repo(root):
         return "har finns redan ett rune-repo"
+    if length(walk(root)) > 0:
+        return "mappen ar inte tom - en clone skriver ett helt trad"
     init(root)
     set_remote(root, url)
-    svar = pull(root)
-    if not starts_with(svar, "hamtade"):
-        return svar
-    n = checkout(root, head_commit(root))
-    if n < 0:
-        return "hamtade allt men lagret var ofullstandigt - inget skrevs"
-    "{svar}, skrev {n} fil(er)"
+    set_secret(root, hemlig)
+    # Resten ar pull: den hamtar, flyttar HEAD och skriver arbetstradet.
+    # Forut stod en egen checkout har, och det var tva satt att gora samma
+    # sak - de kunde glida isar och det ena var alltid det som testades.
+    pull(root)

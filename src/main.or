@@ -120,6 +120,16 @@ define cmd_show(id: text, rel: text, out: text) uses files, console:
         write_file(out, body)
         print_line("skrev {out}")
 
+# Hemligheten skrivs, men skrivs aldrig UT. Att kunna se om en ar satt ar
+# det man behover; att kunna lasa den ur en terminalhistorik ar det man inte
+# vill.
+define cmd_secret(varde: text) uses files, console:
+    if is_empty(varde):
+        print_line(if is_empty(secret(root())) then "ingen hemlighet satt" else "en hemlighet ar satt")
+    else:
+        set_secret(root(), varde)
+        print_line("hemligheten satt")
+
 define cmd_stat(path: text) uses files, console:
     b = bytes_of(read_file(path))
     cuts = chunk_offsets(b)
@@ -165,10 +175,13 @@ define main() -> number uses files, console, clock, env, net:
         if need_repo():
             cmd_show(args[2], args[3], args[4])
     else if cmd is "clone":
-        if length(args) < 3:
-            print_line("rune clone <url>")
+        if length(args) < 4:
+            print_line("rune clone <url> <hemlighet>")
         else:
-            print_line(clone(root(), args[2]))
+            print_line(clone(root(), args[2], args[3]))
+    else if cmd is "secret":
+        if need_repo():
+            cmd_secret(if length(args) > 2 then args[2] else "")
     else if cmd is "remote":
         if need_repo():
             if length(args) > 2:

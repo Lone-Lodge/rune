@@ -18,6 +18,10 @@ check(){ if [ "$2" = "$3" ]; then ok "$1"; else bad "$1 (fick '$2', ville '$3')"
 has()  { if echo "$2" | grep -q "$3"; then ok "$1"; else bad "$1 (fick '$2')"; fi; }
 sha()  { python -c "import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())" "$1"; }
 
+HEMLIS="delad-hemlighet-123"
+( cd srv && "$RUNE" init >/dev/null && "$RUNE" secret "$HEMLIS" >/dev/null )
+has "serve vagrar utan hemlighet" "$(cd a && "$RUNE" init >/dev/null && "$RUNE" serve 7431)" "ingen hemlighet"
+rm -rf a; mkdir -p a
 ( cd srv && exec "$RUNE" serve $PORT >/dev/null 2>&1 ) &
 SRV=$!
 trap 'kill $SRV 2>/dev/null || true' EXIT
@@ -30,15 +34,17 @@ import random; random.seed(5)
 open('stor.bin','wb').write(bytes(random.getrandbits(8) for _ in range(3000000)))
 open('text.md','w').write('hej\n'*200)"
 H_BIN=$(sha stor.bin)
-"$RUNE" init >/dev/null; "$RUNE" remote "$URL" >/dev/null
+"$RUNE" init >/dev/null; "$RUNE" remote "$URL" >/dev/null; "$RUNE" secret "$HEMLIS" >/dev/null
 "$RUNE" add . >/dev/null; "$RUNE" commit "forsta" >/dev/null
 has "push gick igenom" "$("$RUNE" push)" "pushade"
 
 echo "== clone till tom mapp, byte for byte =="
 cd "$T/b"
-has "clone hamtade och skrev" "$("$RUNE" clone "$URL")" "skrev"
+has "fel hemlighet nekas" "$("$RUNE" clone "$URL" "fel-hemlighet" 2>&1)" "fel eller saknad hemlighet"
+rm -rf "$T/b"; mkdir -p "$T/b"; cd "$T/b"
+has "clone hamtade och skrev" "$("$RUNE" clone "$URL" "$HEMLIS")" "skrev"
 check "3 MB binar overlevde natet" "$(sha stor.bin)" "$H_BIN"
-has "clone vagrar over ett befintligt repo" "$("$RUNE" clone "$URL")" "finns redan"
+has "clone vagrar over ett befintligt repo" "$("$RUNE" clone "$URL" "$HEMLIS")" "finns redan"
 
 echo "== inkrementell push =="
 cd "$T/a"
