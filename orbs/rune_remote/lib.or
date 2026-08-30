@@ -398,9 +398,14 @@ define handle(root: text, req: Request) -> Svar uses files, clock:
     fel_svar(404, "")
 
 
-# Servera tills processen stoppas. Ett svar per uppkoppling: pushar och
-# pulls ar fa och stora, inte manga och sma, sa keep-alive vore komplexitet
-# utan vinst.
+# Servera tills processen stoppas. ETT SVAR PER UPPKOPPLING.
+#
+# Det motiverades en gang med att pushar och pulls ar fa och stora. Det ar
+# inte sant: en push av 30 MB ar 553 objekt, alltsa 553 uppkopplingar, och
+# det ar ungefar tio millisekunder styck av de sex sekunder den tar. Vill
+# man ha ner det ar keep-alive svaret - servern loopar pa samma socket och
+# klienten haller den over hela pushen - och det ar en verklig andring av
+# vem som ager en uppkoppling, inte en justering.
 public define serve(root: text, port: number) uses net, files, clock, console:
     if not is_repo(root):
         init(root)
@@ -437,6 +442,77 @@ public define remote_url(root: text) -> text uses files:
 public define set_remote(root: text, url: text) uses files:
     write_file(rune_dir(root) + "/remote", trim(url))
 
+# --- egen HTTP-klient ---------------------------------------------------
+# http-orben startar en curl-PROCESS per request. Det kostade 46 ms styck,
+# och en push av 30 MB ar 537 objekt: 25 sekunder for data som gar over
+# loopback pa under en sekund. Servern ar redan handskriven pa net-orben,
+# sa klienten ar dess spegel och kunde skrivas ur samma delar.
+#
+# Bara for http://. En https-adress gar till http-orben, som har curl och
+# darmed TLS - rune:s egen server talar inte TLS, sa den vagen finns bara
+# for den som satt en proxy framfor.
+
+define is_plain(url: text) -> truth = starts_with(url, "http://")
+
+# "http://host:port/vag" -> [host, port, vag]. Utan port blir det 80.
+define url_parts(url: text) -> [text]:
+    utan = text_of(bytes_part(bytes_of(url), 7, byte_count(url)))
+    snitt = index_of(utan, "/")
+    vard = if snitt < 0 then utan else text_of(bytes_part(bytes_of(utan), 0, snitt))
+    vag = if snitt < 0 then "/" else text_of(bytes_part(bytes_of(utan), snitt, byte_count(utan)))
+    kolon = index_of(vard, ":")
+    if kolon < 0:
+        return [vard, "80", vag]
+    [text_of(bytes_part(bytes_of(vard), 0, kolon)), text_of(bytes_part(bytes_of(vard), kolon + 1, byte_count(vard))), vag]
+
+define status_of(head: text) -> number:
+    d = split(split(head, crlf())[0], " ")
+    if length(d) < 2 then 0 else int_from_text(d[1])
+
+# Las ett svar: huvudet, sedan exakt sa manga bytes det lovade. Samma regel
+# som servern laser en request med, och av samma skal.
+define read_reply(c: number) -> reply uses net:
+    edit raw = ""
+    loop:
+        if contains(raw, head_end()):
+            break
+        bit = recv(c, 65536)
+        if timed_out(bit) or bit is "":
+            return reply{status: 0, body: "svaret kom aldrig"}
+        raw = raw + bit
+    rb = bytes_of(raw)
+    cut = find_head_end(rb)
+    head = text_of(bytes_part(rb, 0, cut))
+    want = content_length(head)
+    forst = text_of(bytes_part(rb, cut + 4, bytes_count(rb)))
+    edit bitar = [forst]
+    edit har = bytes_count(forst)
+    loop:
+        if har >= want:
+            break
+        more = recv(c, 65536)
+        if timed_out(more) or more is "":
+            break
+        bitar = append(bitar, more)
+        har = har + bytes_count(more)
+    hel = join(bitar, "")
+    reply{status: status_of(head), body: if har > want then text_of(bytes_part(bytes_of(hel), 0, want)) else hel}
+
+define native(url: text, method: text, hdr: [text], body: text) -> reply uses net:
+    d = url_parts(url)
+    c = connect_within(d[0], int_from_text(d[1]), 5000)
+    if not ok(c):
+        return reply{status: 0, body: "nadde inte {d[0]}:{d[1]}"}
+    defer close(c)
+    tid = set_timeout(c, 30000)
+    edit huvud = "{method} {d[2]} HTTP/1.1" + crlf() + "Host: {d[0]}" + crlf() + "Content-Length: {bytes_count(body)}" + crlf() + "Connection: close" + crlf()
+    loop h in hdr:
+        huvud = huvud + h + crlf()
+    skickat = send_raw(c, huvud + crlf())
+    if not is_empty(body):
+        skickade = send_raw(c, body)
+    read_reply(c)
+
 # Hemligheten gar som HUVUD och aldrig i sokvagen: en URL hamnar i loggar
 # och i kommandoradshistorik, ett huvud gor det inte. http-orben skickar
 # huvuden genom en konfigfil, sa den syns inte heller for den som listar
@@ -445,19 +521,25 @@ define auth(root: text) -> [text] uses files:
     s = secret(root)
     if is_empty(s) then [] else ["Authorization: Bearer {s}"]
 
+define get_reply(root: text, url: text) -> reply uses net, files:
+    if is_plain(url) then native(url, "GET", auth(root), "") else fetch_with(url, auth(root))
+
+define post_reply(root: text, url: text, body: text) -> reply uses net, files:
+    if is_plain(url) then native(url, "POST", auth(root), body) else post_with(url, "application/octet-stream", body, auth(root))
+
 define hamta(root: text, url: text) -> text uses net, files:
-    r = fetch_with(url, auth(root))
+    r = get_reply(root, url)
     if success(r) then r.body else ""
 
 define send_to(root: text, url: text, body: text) -> text uses net, files:
-    r = post_with(url, "application/octet-stream", body, auth(root))
+    r = post_reply(root, url, body)
     if success(r) then r.body else ""
 
 # Serverns ref, eller ett meddelande som borjar med "!". Varje operation
 # borjar anda med den har fragan, sa det ar dar ett nej hor hemma - annars
 # blir ett 401 tyst till "servern har inget an".
 define ask_ref(root: text, url: text) -> text uses net, files:
-    r = fetch_with("{url}/ref", auth(root))
+    r = get_reply(root, "{url}/ref")
     if r.status is 401:
         return "!fel eller saknad hemlighet - `rune secret <varde>`"
     if not success(r):

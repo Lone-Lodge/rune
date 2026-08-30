@@ -147,6 +147,24 @@ utdelning. Ingen jamforelse av trad, inga deltan, ingen forhandling.
 Matt: 3 MB binar andrad pa **en byte** kostar 4 objekt over natet - en chunk,
 dess blob, manifestet och commiten.
 
+## Egen klient, inte curl
+
+Klienten talar HTTP sjalv over net-orben, precis som servern gor. Skalet
+ar matt: http-orben startar en curl-PROCESS per request, och en push av
+30 MB ar 553 objekt.
+
+    push 30 MB     25,0 s  ->  5,8 s
+    clone 30 MB                6,5 s
+
+En https-adress gar fortfarande till http-orben, som har curl och darmed
+TLS. Rune:s egen server talar inte TLS, sa den vagen finns bara for den
+som satt en proxy framfor.
+
+Det som ar kvar ar UPPKOPPLINGEN: servern ger ett svar per uppkoppling,
+sa en push oppnar 553 stycken, ungefar tio millisekunder var. Keep-alive
+skulle ta bort det, men det ar en verklig andring av vem som ager en
+uppkoppling och inte en justering.
+
 Egen HTTP pa net-orben, inte app-orben: app splittar requesten pa `
 
 `
