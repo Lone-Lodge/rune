@@ -67,6 +67,13 @@ define cmd_unlock(path: text) uses files, console, env, net:
     else:
         print_line("hall av {held}, inte din att slappa: {path}")
 
+define cmd_bryt(path: text) uses files, console, env, net:
+    held = break_here(root(), path, author_name())
+    if is_empty(held):
+        print_line("ingen holl {path}")
+    else:
+        print_line("bruten: {path} var last av {held}")
+
 define cmd_locks() uses files, console, net:
     edit n = 0
     loop l in locks_here(root()):
@@ -184,6 +191,9 @@ define main() -> number uses files, console, clock, env, net:
     else if cmd is "unlock":
         if need_repo():
             cmd_unlock(args[2])
+    else if cmd is "bryt":
+        if need_repo():
+            cmd_bryt(args[2])
     else if cmd is "locks":
         if need_repo():
             cmd_locks()

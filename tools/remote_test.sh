@@ -173,6 +173,11 @@ has "b:s add hoppar over den lasta" "$(USERNAME=kollega "$RUNE" add .)" "last av
 check "b:s kopia ar skrivskyddad" "$(skydd stor.bin)" "skyddad"
 check "och gar faktiskt inte att skriva" "$(skrivbart stor.bin)" "nej"
 check "b:s egen fil ar orord" "$(skydd text.md)" "skrivbar"
+# Ett las nagon lamnat kvar maste ga att bryta OVER natet ocksa - servern
+# ager sanningen, sa ett brutet las som bara finns lokalt hindrar ingen.
+cd "$T/a"; "$RUNE" lock text.md >/dev/null
+cd "$T/b"; has "b kan bryta a:s las" "$(USERNAME=kollega "$RUNE" bryt text.md)" "var last av"
+check "och servern vet om det" "$(cd "$T/a" && "$RUNE" locks | grep -c 'text.md')" "0"
 cd "$T/a"; has "a kan slappa sin egen" "$("$RUNE" unlock stor.bin)" "slappt"
 cd "$T/b"; USERNAME=kollega "$RUNE" add . >/dev/null 2>&1 || true
 check "skyddet slapper med laset" "$(skydd stor.bin)" "skrivbar"

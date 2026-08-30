@@ -97,6 +97,12 @@ check "annans las kommer inte in i kon" "$(grep -c 'annans.txt' .rune/index || t
 check "kan inte slappa annans las" "$("$RUNE" unlock annans.txt | grep -c 'inte din')" "1"
 check "eget las gar att slappa" "$("$RUNE" unlock last.txt | grep -c 'slappt')" "1"
 check "det andra laset star kvar" "$("$RUNE" locks | grep -c 'kollega')" "1"
+# Ett las som nagon lamnat kvar maste ga att ta bort, annars star filen
+# last tills nagon redigerar lasfilen for hand.
+check "bryt sager vem som holl det" "$("$RUNE" bryt annans.txt | grep -c 'last av kollega')" "1"
+check "och laset ar borta" "$("$RUNE" locks | grep -c 'kollega')" "0"
+check "bryta ett fritt las sager ifran" "$("$RUNE" bryt annans.txt | grep -c 'ingen holl')" "1"
+check "och filen gar att koa igen" "$("$RUNE" add annans.txt | grep -c 'koade 1')" "1"
 
 echo "== ogonblicksbilden ar HELA tradet =="
 # En partiell add fick manifestet att bli BARA det koade: allt man inte

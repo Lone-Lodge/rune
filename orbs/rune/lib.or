@@ -1148,6 +1148,29 @@ public define fsck(root: text) -> [text] uses files:
             trasiga = append(trasiga, d[0] + tab() + d[1])
     trasiga
 
+# Ta ifran nagon annan deras las. Returnerar vem som holl det, "" om det
+# redan var ledigt.
+#
+# `unlock` vagrar med flit - man tar inte nagon annans las ifran dem av
+# misstag. Men en som slutat, eller en maskin som dott, lamnar annars sitt
+# las for alltid, och da star filen last tills nagon redigerar lasfilen
+# for hand. Det ar ett SEPARAT ord for att det ska ga att lasa i en
+# terminalhistorik vad som hande.
+#
+# Vem som helst med hemligheten far bryta. Hemligheten ar en dorrnyckel och
+# inte en identitet, sa det finns ingen grund att skilja pa vem som far -
+# det som finns ar att det syns.
+public define break_lock(root: text, path: text) -> text uses files:
+    held = lock_owner(root, path)
+    if is_empty(held):
+        return ""
+    edit kept = []
+    loop l in read_locks(root):
+        if entry_path(l) is not path:
+            kept = append(kept, l)
+    write_locks(root, kept)
+    held
+
 # --- fragor som en yta behover ------------------------------------------
 
 # Filens versioner, nyast forst: en rad per DISTINKT innehall, markt med

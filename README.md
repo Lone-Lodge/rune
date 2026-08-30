@@ -74,6 +74,7 @@ forsvinner.
     rune lock <sokvag>          # ta filen, ingen annan far koa den
     rune unlock <sokvag>        # slapp den
     rune locks                  # vem haller vad
+    rune bryt <sokvag>          # ta ifran nagon annan deras las
     rune stat <fil>             # visa chunkningen utan att lagra
     rune fsck                   # las varje objekt och jamfor med dess id
     rune gc                     # ta bort det ingen commit nar
@@ -122,6 +123,17 @@ Laset ar **sparret, inte en varning**: `add` vagrar koa en sokvag nagon
 annan haller, sa den kan inte ta sig in i en commit. Kontrollen bor i `add`
 och inte i CLI:t, annars gar den att ga runt genom att anropa lagret direkt.
 Man tar inte heller nagon annans las ifran dem - `unlock` vagrar.
+
+    rune bryt <sokvag>          ta ifran nagon annan deras las
+
+`unlock` vagrar med FLIT. Men en som slutat, eller en maskin som dott,
+lamnar annars sitt las for alltid, och da star filen last tills nagon
+redigerar lasfilen for hand. Darfor ett eget ord: det ska ga att lasa i en
+terminalhistorik vad som hande.
+
+Vem som helst med hemligheten far bryta. Hemligheten ar en dorrnyckel och
+inte en identitet, sa det finns ingen grund att skilja pa vem som far -
+det som finns ar att det SYNS.
 
     .rune/locks    "sokvag<TAB>agare<TAB>unixtid", en per rad, sorterad
 
