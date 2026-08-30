@@ -158,9 +158,21 @@ den tar 0,4 s - da finns objekten redan. Vill man ha ner forsta vandan ar
 svaret farre och storre filer i lagret, alltsa packning, och det ar en
 formatandring.
 
+## Minnet, och var taket sitter
+
+Filer lases inte langre hela. Chunkningen gar genom ett FONSTER: en grans
+beror bara pa bytesen fran chunkens borjan och som mest chunk_max framat,
+sa mer an sa behover aldrig ligga inne. `checkout` skriver chunk for chunk
+rakt ut i filen.
+
+Minnet vaxer anda med filstorleken, och det taket sitter i Orion och inte i
+rune: det som en loopvanda allokerar aterlamnas inte. En 256 MB-fil toppar
+pa 4,6 GB. Ett program som BARA laser 256 MB i block och gor en byteslista
+av varje block, utan att spara nagot, toppar pa 1,6 GB - `bytes_of` ger ett
+tal per byte, och inget varv stads undan. Fonstret ar alltsa ratt form men
+ger ingen vinst forran Orion atervinner per varv.
+
 ## Granser
 
-Filer lases hela i minnet nar de LAGRAS, sa nagra hundra MB per fil.
-Aterskapningen gor det inte langre: `checkout` skriver chunk for chunk.
 Inga grenar, ingen autentisering pa servern - den litar pa alla som kan na
 porten, sa den hor hemma bakom brandvagg eller VPN tills det finns.

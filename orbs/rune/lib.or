@@ -45,7 +45,36 @@ define gear_table() -> [number]:
         t = append(t, x)
     t
 
+# Nasta grans efter `from`. Fingeravtrycket NOLLSTALLS vid varje chunkstart
+# och granssokningen slutar senast chunk_max fram, sa en grans beror bara pa
+# bytesen fran `from` och som mest chunk_max framat. Det ar den egenskapen
+# som gor att en fil kan chunkas genom ett fonster i stallet for hel.
+#
+# -1 nar fonstret tog slut innan en grans hittades och mer finns att lasa.
+# `at_eof` sager att det som ligger har ar allt som finns, och da ar filslutet
+# sjalvt en grans.
+define cut_after(b: [number], from: number, gear: [number], at_eof: truth) -> number:
+    n = bytes_count(b)
+    edit fp = 0
+    edit i = from + chunk_min()
+    edit cut = 0 - 1
+    loop:
+        if i >= n:
+            cut = if at_eof then n else 0 - 1
+            break
+        if i - from >= chunk_max():
+            cut = i
+            break
+        fp = ((fp * 2) + gear[byte_at(b, i)]) % 4294967296
+        mask = if i - from < chunk_norm() then mask_strict() else mask_loose()
+        if (fp & mask) is 0:
+            cut = i + 1
+            break
+        i = i + 1
+    cut
+
 # Slutoffsets for varje chunk i `b`. Sista elementet ar alltid langden.
+# Hela filen i minnet: bara `rune stat`, som visar chunkningen av EN fil.
 public define chunk_offsets(b: [number]) -> [number]:
     gear = gear_table()
     n = bytes_count(b)
@@ -54,22 +83,7 @@ public define chunk_offsets(b: [number]) -> [number]:
     loop:
         if start >= n:
             break
-        edit fp = 0
-        edit i = start + chunk_min()
-        edit cut = 0 - 1
-        loop:
-            if i >= n:
-                cut = n
-                break
-            if i - start >= chunk_max():
-                cut = i
-                break
-            fp = ((fp * 2) + gear[byte_at(b, i)]) % 4294967296
-            mask = if i - start < chunk_norm() then mask_strict() else mask_loose()
-            if (fp & mask) is 0:
-                cut = i + 1
-                break
-            i = i + 1
+        cut = cut_after(b, start, gear, true)
         cuts = append(cuts, cut)
         start = cut
     cuts
@@ -98,39 +112,63 @@ public define has_object(rune_dir: text, sort: text, id: text) -> truth uses fil
     file_exists(object_path(rune_dir, sort, id)) is not 0
 
 # --- filer in och ut ----------------------------------------------------
-# Lagra en fil: chunka, skriv de chunkar som saknas, skriv receptet.
-# Returnerar blob-id. Filen lases hel i minnet - v1-granns, se README.
-define put_file(rune_dir: text, path: text) -> text uses files:
-    b = bytes_of(read_file(path))
-    cuts = chunk_offsets(b)
+# En fils chunkar, i ordning, genom ett FONSTER over filen och inte hela
+# filen i minnet. `bytes_of` gor en lista med ett tal per byte, sa en
+# 256 MB-fil kostade 4,6 GB att lagra - atton ganger sin egen storlek.
+#
+# En vandring, tva arenden: `spara` skiljer den som LAGRAR chunkarna fran
+# den som bara vill veta id:t. De sex raderna stod med flit tva ganger
+# forut, men med fonstret att halla reda pa ar duplikatet inte langre
+# billigare att lasa an det ena ordet ar.
+define read_block() -> number = 1048576
+
+define chunk_ids(rune_dir: text, path: text, spara: truth) -> [text] uses files:
+    gear = gear_table()
+    h = open_read(path)
+    if not ok(h):
+        return []
+    defer close(h)
     edit ids = []
-    edit start = 0
-    loop i in 0 until length(cuts):
-        stop = cuts[i]
-        ids = append(ids, put_object(rune_dir, "chunks", text_of(bytes_part(b, start, stop))))
-        start = stop
-    put_object(rune_dir, "blobs", blob_body(ids))
+    edit rest = ""
+    edit slut = false
+    loop:
+        if not slut:
+            bit = read_chunk(h, read_block())
+            if is_end(bit):
+                slut = true
+            else:
+                rest = rest + bit
+        win = bytes_of(rest)
+        n = bytes_count(win)
+        edit at = 0
+        loop:
+            if at >= n:
+                break
+            cut = cut_after(win, at, gear, slut)
+            if cut < 0:
+                break
+            del = text_of(bytes_part(win, at, cut))
+            ids = append(ids, if spara then put_object(rune_dir, "chunks", del) else sha256(del))
+            at = cut
+        # Det som blev over ar borjan pa nasta chunk och aldrig mer an
+        # chunk_max, sa fonstret vaxer inte med filen.
+        rest = text_of(bytes_part(win, at, n))
+        if slut and is_empty(rest):
+            break
+    ids
 
 # Blob-kroppen ar chunk-id, ett per rad. EN regel, delad av den som lagrar
 # och den som bara vill veta id:t - annars kan status och add glida isar.
 define blob_body(ids: [text]) -> text = join(ids, "\n")
 
+# Lagra en fil: chunka, skriv de chunkar som saknas, skriv receptet.
+# Returnerar blob-id.
+define put_file(rune_dir: text, path: text) -> text uses files:
+    put_object(rune_dir, "blobs", blob_body(chunk_ids(rune_dir, path, true)))
+
 # Blob-id for en fil UTAN att lagra nagot. Status ska inte skriva objekt.
-# SYSKON till put_file: samma vandring genom chunkarna, men hashar bara
-# istallet for att lagra. De sex raderna star med flit tva ganger - att
-# lyfta ut dem hade krävt en funktion som parameter, och det ar en dyrare
-# sak att lasa an duplikatet ar att underhalla. Det som VERKLIGEN maste
-# folja ats, blob-kroppens format, ar redan utbrutet i blob_body.
 define file_blob_id(path: text) -> text uses files:
-    b = bytes_of(read_file(path))
-    cuts = chunk_offsets(b)
-    edit ids = []
-    edit start = 0
-    loop i in 0 until length(cuts):
-        stop = cuts[i]
-        ids = append(ids, sha256(text_of(bytes_part(b, start, stop))))
-        start = stop
-    sha256(blob_body(ids))
+    sha256(blob_body(chunk_ids("", path, false)))
 
 # Chunk-id:n ur ett recept, i ordning.
 define blob_chunks(rune_dir: text, blob_id: text) -> [text] uses files:
@@ -298,12 +336,18 @@ define karta_av(lines: [text]) -> table of text:
         m[entry_path(l)] = entry_blob(l)
     m
 
-# Sorterad pa sokvag. Samma trad MASTE ge samma manifest-id.
+# Sorterad pa sokvag. Samma trad MASTE ge samma manifest-id, och manifestet
+# ar de har raderna ordagrant.
+#
+# Parametrarna star ANNOTERADE som text med flit. Utan annotering blir de
+# `int` och jamforelsen tittar pa pekarna, sa `sorted` lamnade listan i den
+# ordning den kom in. Det syntes inte sa lange ordningen kom fran en fil,
+# men ur en tabell ar den inte given.
 define rader_av(m: table of text) -> [text]:
     edit out = []
     loop path, blob in m:
         out = append(out, path + tab() + blob)
-    sorted(out, order_of{less: (a, b): a < b})
+    sorted(out, order_of{less: (a: text, b: text): a < b})
 
 # Vardet i en tabell, "" nar nyckeln saknas.
 define vid(m: table of text, key: text) -> text:
@@ -462,7 +506,7 @@ public define lock(root: text, path: text, owner: text) -> text uses files, cloc
     if not is_empty(held):
         return if held is owner then "" else held
     line = path + tab() + owner + tab() + (now_unix() as text)
-    write_locks(root, sorted(append(read_locks(root), line), order_of{less: (a, b): a < b}))
+    write_locks(root, sorted(append(read_locks(root), line), order_of{less: (a: text, b: text): a < b}))
     ""
 
 # Slapp sokvagen. "" nar den ar ledig efterat, annars namnet som haller
