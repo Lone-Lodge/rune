@@ -48,6 +48,43 @@ open('stor.bin','wb').write(d)"
 "$RUNE" add . >/dev/null; "$RUNE" commit "en byte" >/dev/null
 check "en andrad byte i 3 MB kostar 4 objekt" "$("$RUNE" push)" "pushade 4 objekt"
 
+echo "== pull skriver arbetstradet =="
+# Pull rorde inte tradet forut: du fick hamta hem objekten och sedan
+# sjalv klistra in ett 64 tecken langt id i checkout. Nu gor den bada,
+# och vagrar helt om du har nagot okommitterat som skulle skrivas over.
+cd "$T/a"
+printf 'andrad
+' > text.md
+printf 'ny fil
+' > extra.md
+"$RUNE" add . >/dev/null; "$RUNE" commit "andring och en ny" >/dev/null
+"$RUNE" push >/dev/null
+cd "$T/b"
+has "pull skriver filerna" "$("$RUNE" pull)" "skrev"
+check "andringen kom fram" "$(cat text.md)" "andrad"
+check "den nya filen kom fram" "$(cat extra.md)" "ny fil"
+check "tradet ar rent efter pull" "$("$RUNE" status | wc -l)" "0"
+cd "$T/a"
+rm extra.md
+"$RUNE" add . >/dev/null; "$RUNE" commit "bort med extra" >/dev/null
+"$RUNE" push >/dev/null
+cd "$T/b"
+"$RUNE" pull >/dev/null
+check "borttagningen kom fram" "$([ -f extra.md ] && echo finns || echo borta)" "borta"
+
+echo "== pull vagrar over okommitterat =="
+printf 'okoat
+' > mitt.txt
+cd "$T/a"
+printf 'annu en
+' > text.md
+"$RUNE" add . >/dev/null; "$RUNE" commit "annu en" >/dev/null
+"$RUNE" push >/dev/null
+cd "$T/b"
+has "pull vagrar" "$("$RUNE" pull)" "inte ar committade"
+check "min egen fil ar kvar" "$(cat mitt.txt)" "okoat"
+rm mitt.txt
+
 echo "== tva som gar isar =="
 cd "$T/b"; "$RUNE" pull >/dev/null
 printf 'fran b\n' > b.txt; "$RUNE" add . >/dev/null; "$RUNE" commit "b" >/dev/null
@@ -56,7 +93,7 @@ cd "$T/a"; printf 'fran a\n' > a.txt; "$RUNE" add . >/dev/null; "$RUNE" commit "
 cd "$T/b"
 has "push vagrar nar servern gatt fore" "$("$RUNE" push)" "pull. forst"
 has "pull vagrar snabbspola over egna commits" "$("$RUNE" pull)" "gatt isar"
-check "b:s egen commit ligger kvar" "$("$RUNE" log | wc -l)" "3"
+check "b:s egen commit ligger kvar" "$("$RUNE" log | wc -l)" "6"
 
 echo "== init respekterar en befintlig git =="
 mkdir -p "$T/g" && cd "$T/g" && git init -q . && printf 'x

@@ -520,6 +520,47 @@ public define checkout(root: text, id: text) -> number uses files:
         n = n + 1
     n
 
+# Ett fullstandigt commit-id ur ett prefix. `rune log` visar tolv tecken
+# och `checkout` kravde alla sextiofyra, sa verktygets egen utskrift gick
+# inte att klistra in i verktygets eget kommando.
+#
+# "" bade nar inget matchar och nar FLERA gor det. Att gissa vilken commit
+# nagon menade ar inte rune:s sak; skriv fler tecken.
+public define resolve(root: text, prefix: text) -> text uses files:
+    if is_empty(prefix):
+        return ""
+    edit hit = ""
+    edit n = 0
+    loop id in log(root):
+        if starts_with(id, prefix):
+            hit = id
+            n = n + 1
+    if n is 1 then hit else ""
+
+# Gor arbetstradet LIKA med en ogonblicksbild: skriv det som ska finnas,
+# ta bort det som inte ska. Antal skrivna, eller -1 om nagot saknas i
+# lagret - da rors ingenting.
+#
+# Skillnaden mot checkout ar borttagningen, och den ar farlig nog att bara
+# ha en anropare: `pull`, som forst har krävt ett rent trad. Filer som
+# .runeignore haller utanfor rors inte, for walk ser dem inte.
+public define write_tree(root: text, id: text) -> number uses files:
+    rader = commit_manifest(root, id)
+    loop line in rader:
+        if not blob_complete(rune_dir(root), entry_blob(line)):
+            return 0 - 1
+    edit ska: table of text = {}
+    loop line in rader:
+        ska[entry_path(line)] = entry_blob(line)
+    loop rel in walk(root):
+        if not has(ska, rel):
+            togs = remove_file(root + "/" + rel)
+    edit n = 0
+    loop line in rader:
+        skrev = get_file(rune_dir(root), entry_blob(line), root + "/" + entry_path(line))
+        n = n + 1
+    n
+
 # Blob-id for en sokvag i en radlista, "" om sokvagen inte finns dar.
 define lookup(lines: [text], path: text) -> text:
     edit found = ""

@@ -68,11 +68,17 @@ forsvinner.
     rune status                 # koat / nytt / andrat / borttaget
     rune commit "meddelande"
     rune log
+    rune history <fil>          # filens versioner, nyast forst
+    rune show <commit> <fil> <ut>   # innehallet vid en commit, till en fil
     rune checkout <commit>      # skriv ut en ogonblicksbild
     rune lock <sokvag>          # ta filen, ingen annan far koa den
     rune unlock <sokvag>        # slapp den
     rune locks                  # vem haller vad
     rune stat <fil>             # visa chunkningen utan att lagra
+
+Ett commit-id far forkortas sa langt det ar entydigt, alltsa de tolv
+tecken `rune log` visar. Ar prefixet tvetydigt sager rune det i stallet
+for att gissa.
 
 ## Bredvid git
 
@@ -121,7 +127,7 @@ utdelning. Ingen jamforelse av trad, inga deltan, ingen forhandling.
     rune serve 7420             # pa maskinen som haller repot
     rune clone http://host:7420 # init + remote + pull + checkout i ett
     rune push                   # skickar det servern saknar
-    rune pull                   # hamtar det du saknar (ror inte arbetstradet)
+    rune pull                   # hamtar det du saknar OCH skriver arbetstradet
 
 Matt: 3 MB binar andrad pa **en byte** kostar 4 objekt over natet - en chunk,
 dess blob, manifestet och commiten.
@@ -131,6 +137,16 @@ Egen HTTP pa net-orben, inte app-orben: app splittar requesten pa `
 `
 och tar andra biten som kropp, sa en binar kropp som rakar innehalla den
 sekvensen kapas. Chunkar ur .uasset-filer gor det forr eller senare.
+
+`pull` gor bada halvorna: hamtar objekten, flyttar HEAD och skriver
+arbetstradet dit. Forut gjorde den bara den forsta, sa du fick klistra in
+ett 64 tecken langt id i `checkout` efterat.
+
+Darfor **vagrar den nar du har nagot okommitterat**, och kontrollen
+ligger fore hamtningen sa ett nej inte lamnar halva servern nedladdad.
+`checkout` skriver bara filer och tar aldrig bort nagot - den flyttar
+inte heller HEAD, sa den ar till for att TITTA pa ett gammalt lage, inte
+for att sta i det.
 
 **Bara snabbspolning.** Push vagrar om serverns commit inte ligger i din
 kedja, pull vagrar om du har egna commits vid sidan av. Binarer gar anda

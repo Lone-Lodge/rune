@@ -90,7 +90,11 @@ define cmd_log() uses files, console:
         when = utc_time(int_from_text(commit_field(body, "time")), "%Y-%m-%d %H:%M")
         print_line("{short}  {when}  {commit_field(body, "author")}  {commit_message(body)}")
 
-define cmd_checkout(id: text) uses files, console:
+define cmd_checkout(vad: text) uses files, console:
+    id = resolve(root(), vad)
+    if is_empty(id):
+        print_line("ingen entydig commit for {vad} - `rune log` visar vilka som finns")
+        return
     n = checkout(root(), id)
     if n < 0:
         print_line("lagret saknar chunkar for {id} - inget skrivet. `rune pull` forst?")

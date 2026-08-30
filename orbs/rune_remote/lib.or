@@ -309,6 +309,12 @@ public define pull(root: text) -> text uses net, files, console:
     deras = trim(hamta("{url}/ref"))
     if is_empty(deras):
         return "servern har inget an"
+    # Ett smutsigt trad forst av allt: pull skriver over arbetstradet nar
+    # den ar klar, och da far det inte finnas nagot dar som bara du har.
+    # Kontrollen ligger FORE hamtningen, sa ett nej inte lamnar halva
+    # servern nedladdad.
+    if length(status(root)) > 0:
+        return "du har andringar som inte ar committade - `rune status` visar dem"
     mitt = head_commit(root)
     if has_object(rd, "commits", deras):
         # Vi har den redan: antingen ar vi i fas, eller sa ligger vi fore.
@@ -349,7 +355,12 @@ public define pull(root: text) -> text uses net, files, console:
         skrev = put_object(rd, "commits", f[1])
         i = i - 1
     skrivet = write_file(rd + "/" + head_ref(root), deras)
-    "hamtade {hamtade} objekt, HEAD ar {deras}"
+    # Och arbetstradet dit. Tradet var rent nar vi borjade, sa allt som
+    # skiljer nu ar det vi just hamtade hem.
+    n = write_tree(root, deras)
+    if n < 0:
+        return "hamtade {hamtade} objekt, men lagret saknar chunkar - arbetstradet ororda"
+    "hamtade {hamtade} objekt, skrev {n} fil(er), HEAD ar {deras}"
 
 # Hamta ett objekt vi saknar. Innehallet kontrolleras mot sitt id: det ar
 # put_object som hashar, sa ett id som inte stammer skriver fel fil och
