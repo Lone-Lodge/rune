@@ -153,6 +153,7 @@ check "binaren ur samma pack" "$(md5 slump.bin)" "$S2"
 cd "$T"
 
 echo "== skrapet =="
+# `pack` skriver om det NABARA, sa skrap forsvinner som en foljd.
 # Ett add som aldrig blev en commit lamnar sina chunkar kvar. Man sparar,
 # koar, sparar igen - och ingenting stadade det forut.
 mkdir -p "$T/gc"; cd "$T/gc"
@@ -161,9 +162,9 @@ for i in 1 2 3; do python -c "import os;open('a.bin','wb').write(os.urandom(5000
 "$RUNE" commit ett >/dev/null
 objekt(){ find .rune/chunks .rune/blobs .rune/commits .rune/manifests -type f 2>/dev/null | wc -l; }
 FORE=$(objekt)
-"$RUNE" gc >/dev/null
+"$RUNE" pack >/dev/null
 EFTER=$(objekt)
-check "gc tog bort nagot" "$([ "$EFTER" -lt "$FORE" ] && echo ja || echo nej)" "ja"
+check "pack tog bort skrapet" "$([ "$EFTER" -lt "$FORE" ] && echo ja || echo nej)" "ja"
 check "och lagret ar sunt efterat" "$("$RUNE" fsck | grep -c 'sunt')" "1"
 H=$(cat .rune/refs/heads/main)
 rm a.bin; "$RUNE" checkout "$H" >/dev/null
@@ -171,9 +172,9 @@ check "commiten gar fortfarande att checka ut" "$(python -c "import os;print(os.
 # Det KOADE far inte stadas bort under fotterna pa den som koade det.
 python -c "import os;open('b.bin','wb').write(os.urandom(100000))"
 "$RUNE" add b.bin >/dev/null
-"$RUNE" gc >/dev/null
+"$RUNE" pack >/dev/null
 "$RUNE" commit tva >/dev/null
-check "koat overlever en gc" "$("$RUNE" status | wc -l)" "0"
+check "koat overlever en pack" "$("$RUNE" status | wc -l)" "0"
 check "och lagret ar sunt" "$("$RUNE" fsck | grep -c 'sunt')" "1"
 cd "$T"
 
@@ -213,20 +214,25 @@ python -c "import os;open('a.bin','wb').write(os.urandom(200000))"
 "$RUNE" add . >/dev/null; "$RUNE" commit "ett" >/dev/null
 check "fsck ser ett sunt lager" "$("$RUNE" fsck | grep -c 'sunt')" "1"
 check "stat laser inte hela filen" "$("$RUNE" stat a.bin | grep -c 'chunkar')" "1"
-# Namnet ar hashen av innehallet, sa en andrad byte gor filen till nagot
-# annat an det objekt den utger sig for att vara.
-F=$(find .rune/chunks -type f | head -1)
-python -c "import sys;p=sys.argv[1];d=bytearray(open(p,'rb').read());d[10]^=0xFF;open(p,'wb').write(d)" "$F"
+# Namnet ar hashen av innehallet, sa en andrad byte gor kroppen till nagot
+# annat an det objekt den utger sig for att vara. Objekten ligger i packen
+# nu, sa det ar dar bytet ska andras.
+python -c "
+import glob
+p=glob.glob('.rune/pack/*.pack')[0]
+d=bytearray(open(p,'rb').read()); d[10]^=0xFF; open(p,'wb').write(d)"
 check "fsck hittar en andrad chunk" "$("$RUNE" fsck | grep -c 'TRASIGT')" "1"
 
 echo "== en skrivning som inte gar igenom =="
-# .rune/chunks som FIL i stallet for mapp: da misslyckas varje objekt.
-# Forut hamnade blob-id:t i kon anda, och commiten gick inte att checka ut.
+# Bade packmappen och objektmappen som FILER: da misslyckas skrivningen
+# oavsett vilken vag objektet tar. Forut hamnade blob-id:t i kon anda, och
+# commiten gick inte att checka ut.
 mkdir -p "$T/full"; cd "$T/full"
 "$RUNE" init >/dev/null
 printf 'x
 ' > a.txt
-rm -rf .rune/chunks; printf 'inte en mapp' > .rune/chunks
+rm -rf .rune/chunks .rune/pack
+printf 'inte en mapp' > .rune/chunks; printf 'inte heller' > .rune/pack
 check "add sager ifran" "$("$RUNE" add . | grep -c 'KUNDE INTE LAGRAS')" "1"
 check "och koar ingenting" "$(cat .rune/index | wc -c)" "0"
 cd "$T"

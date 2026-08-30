@@ -402,6 +402,27 @@ Och de tomma objektmapparna tas bort. Tva hex som mapp ger upp till 256 per
 sort, och en tom mapp kostar ett kluster precis som en fil - tusen av dem
 var fyra av de sju megabyte som lag kvar efter forsta packningen.
 
+## Vad `add` kostar, och vad som INTE ar orsaken
+
+`add` av 3200 sma filer tar ~40 s, alltsa 12 ms per fil. Kall `status`
+laser, chunkar och hashar SAMMA filer for 0,7 ms per fil. Skillnaden ar
+maetbart INTE nagot av foljande, och det ar provkort ett i taget:
+
+- objektskrivningen: med `put_object` helt tom - den returnerar bara
+  hashen - tar `add` fortfarande 13,7 ms per fil
+- filskapandet: en oppen pack i stallet for tva nya filer per fil tog
+  47 s till 41 s, alltsa knappt nagot
+- `file_exists` pa en sokvag som inte finns: 0,054 ms per anrop, matt
+- `slot_get` av en tabell: gratis, matt pa 6000 poster
+- packregistret: att hoppa over uppslagningen andrar ingenting
+- den oppna skrivarens filhandtag: ingen skillnad
+
+Kvar star att `put_file` och `file_blob_id` gor samma sak - efter
+stubbningen bokstavligen samma rader - men kostar 12 ms respektive 0,7 ms
+per fil. Skillnaden ligger alltsa inte i det som anropas per fil utan i
+slingan omkring, och den ar inte hittad. Kurvan ar LINJAR, sa det ar en
+konstant per fil och inte nagot som vaxer.
+
 ## Skrapet
 
 Ett `add` som aldrig blev en commit lamnar sina chunkar kvar. Det ar inte

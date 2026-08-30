@@ -98,6 +98,74 @@ define object_path(rune_dir: text, sort: text, id: text) -> text:
     rest = text_of(bytes_part(bytes_of(id), 2, byte_count(id)))
     rune_dir + "/" + sort + "/" + head + "/" + rest
 
+# --- att skriva RAKT in i en pack -----------------------------------------
+# `add` av 3200 filer tog 47 sekunder mot gits 10, och nastan allt var att
+# SKAPA filer: tva objekt per fil, och en ny fil pa Windows kostar
+# millisekunder. En SKRIVARE haller en pack oppen och lagger objekten i den.
+#
+# Den komprimerar INTE. Var kompressor gor 7 MB/s, sa att komprimera medan
+# man koar hade gjort `add` langsammare an den var. Packen komprimeras av
+# `rune pack`, som ar underhallssteget - samma delning som git har mellan
+# att skriva ett objekt och att packa om.
+#
+# Slotarna ar PROCESSENS: en skrivare lever fran att `add` oppnar den till
+# att den stangs, och det ar hela dess livstid.
+define writer_pa() -> truth = slot_has("rune:w") and slot_get_number("rune:w:oppen") is 1
+
+public define writer_open(root: text) uses files:
+    rd = rune_dir(root)
+    mkdir_all(pack_dir(rd))
+    n = length(list_dir(pack_dir(rd)))
+    bas = pack_dir(rd) + "/" + ((n + 1) as text)
+    h = open_write(bas + ".pack")
+    if not ok(h):
+        return
+    i = open_write(bas + ".idx")
+    if not ok(i):
+        stangd = close(h)
+        return
+    slot_set("rune:w", h)
+    slot_set("rune:w:i", i)
+    slot_set("rune:w:at", 0)
+    slot_set("rune:w:namn", bas)
+    slot_set("rune:w:oppen", 1)
+    edit sedda: table of text = {}
+    slot_set("rune:w:sedda", sedda)
+
+public define writer_close() uses files:
+    if not writer_pa():
+        return
+    a = close(slot_get_number("rune:w"))
+    b = close(slot_get_number("rune:w:i"))
+    slot_set("rune:w:oppen", 0)
+    # En vanda som inte lagrade nagot nytt ska inte lamna tva tomma filer.
+    if slot_get_number("rune:w:at") is 0:
+        bas = slot_get("rune:w:namn")
+        p1 = remove_file(bas + ".pack")
+        p2 = remove_file(bas + ".idx")
+
+# Registret skrivs rad for rad medan vi gar, sa en avbruten `add` lamnar en
+# pack och ett register som stammer med varandra.
+define writer_put(sort: text, id: text, body: text) -> truth uses files:
+    edit sedda: table of text = slot_get("rune:w:sedda")
+    if has(sedda, id):
+        return true
+    langd = bytes_count(body)
+    at = slot_get_number("rune:w:at")
+    if write_chunk(slot_get_number("rune:w"), body) < 0:
+        return false
+    rad = id + tab() + sort + tab() + (at as text) + tab() + (langd as text) + tab() + (langd as text) + text_of([10])
+    skrev = write_chunk(slot_get_number("rune:w:i"), rad)
+    slot_set("rune:w:at", at + langd)
+    # Tabellen lever langre an varvet, sa BADE nyckeln och tabellens egen
+    # tillvaxt maste till malloc. En insattning medan arenan ar pa lagger
+    # de nya hinkarna DAR, och nasta svep river dem under tabellen - det
+    # blir en lasning av frigjort minne nasta gang nagon fragar den.
+    was = persist_on()
+    sedda[persisted(id)] = ""
+    persist_off(was)
+    true
+
 # Skriv ett objekt om det inte redan finns. Returnerar id:t, eller "" om
 # skrivningen inte gick igenom.
 #
@@ -107,12 +175,15 @@ define object_path(rune_dir: text, sort: text, id: text) -> text:
 # sakna det: ett saknat objekt syns, ett fel objekt gor det inte.
 public define put_object(rune_dir: text, sort: text, body: text) -> text uses files:
     id = sha256(body)
+    if has_object(rune_dir, sort, id):
+        return id
+    if writer_pa():
+        return if writer_put(sort, id, body) then id else ""
     path = object_path(rune_dir, sort, id)
-    if file_exists(path) is 0:
-        mkdir_all(path_parent(path))
-        if write_file(path, body) is 0:
-            skrap = remove_file(path)
-            return ""
+    mkdir_all(path_parent(path))
+    if write_file(path, body) is 0:
+        skrap = remove_file(path)
+        return ""
     id
 
 # --- packar --------------------------------------------------------------
@@ -144,6 +215,11 @@ public define pack_dir(rune_dir: text) -> text = rune_dir + "/pack"
 define pack_index(rune_dir: text) -> table of text uses files:
     if slot_has("rune:pack"):
         return slot_get("rune:pack")
+    # Registret lever hela processen, sa det byggs i malloc och inte i
+    # arenan. Bygger man det medan en arena ar pa hamnar bade nycklar och
+    # varden dar, och runtimen sager ifran nar en sadan tabell laggs i en
+    # slot - den kan inte veta hur den ska kopiera ut den at oss.
+    was = persist_on()
     edit m: table of text = {}
     pd = pack_dir(rune_dir)
     if is_dir(pd) is not 0:
@@ -153,8 +229,9 @@ define pack_index(rune_dir: text) -> table of text uses files:
                 loop rad in read_lines(pd + "/" + f):
                     d = split(rad, tab())
                     if length(d) >= 5:
-                        m[d[1] + "/" + d[0]] = bas + tab() + d[2] + tab() + d[3] + tab() + d[4]
+                        m[persisted(d[1] + "/" + d[0])] = persisted(bas + tab() + d[2] + tab() + d[3] + tab() + d[4])
     slot_set("rune:pack", m)
+    persist_off(was)
     m
 
 # Kroppen ur en pack, "" om objektet inte ligger i nagon.
@@ -193,6 +270,10 @@ public define get_object(rune_dir: text, sort: text, id: text) -> text uses file
 public define has_object(rune_dir: text, sort: text, id: text) -> truth uses files:
     if file_exists(object_path(rune_dir, sort, id)) is not 0:
         return true
+    if writer_pa():
+        edit sedda: table of text = slot_get("rune:w:sedda")
+        if has(sedda, id):
+            return true
     has(pack_index(rune_dir), sort + "/" + id)
 
 # Ett objekts storlek utan att lasa det. Objekten ar OKOMPRIMERADE, sa en
@@ -560,6 +641,9 @@ public type Koat: antal: number, last: [text], fel: [text]
 
 define stage(root: text, rels: [text], borta: [text], owner: text) -> Koat uses files:
     rd = rune_dir(root)
+    # EN pack for hela vandan i stallet for tva filer per fil.
+    writer_open(root)
+    defer writer_close()
     edit idx = karta_av(read_lines(rd + "/index"))
     hallare = karta_av(read_locks(root))
     edit blocked = []
@@ -937,9 +1021,9 @@ public define file_parts(root: text, id: text, rel: text, from: number, to: numb
 # inte sallan: man sparar, koar, sparar igen, koar igen. Matt pa tre add
 # och en commit: 28 objekt i lagret dar 7 behovdes.
 #
-# Ingenting stader det, sa lagret vaxer med varje angrad tanke. Det ar
-# darfor gc finns - inte for att gora nagot mindre, utan for att det som
-# ingen kan na inte ska ligga kvar for alltid.
+# `pack` ar det som stadar. Den skriver om det NABARA och lamnar resten,
+# sa skrap forsvinner som en foljd av att lagret skrivs om - det behovs
+# ingen egen gc bredvid.
 
 define mark_blob(rd: text, blob: text, set: table of text) -> table of text uses files:
     edit m = set
@@ -964,22 +1048,6 @@ public define reachable(root: text) -> table of text uses files:
         if entry_blob(l) is not borttagen():
             set = mark_blob(rd, entry_blob(l), set)
     set
-
-# Ta bort det ingen nar. Antal borttagna objekt.
-public define gc(root: text) -> number uses files:
-    rd = rune_dir(root)
-    lever = reachable(root)
-    edit n = 0
-    loop sort in ["chunks", "blobs", "manifests", "commits"]:
-        mapp = rd + "/" + sort
-        if is_dir(mapp) is not 0:
-            loop d in list_dirs(mapp):
-                if not is_empty(d):
-                    loop f in list_dir(mapp + "/" + d):
-                        if not is_empty(f) and not has(lever, sort + "/" + d + f):
-                            togs = remove_file(mapp + "/" + d + "/" + f)
-                            n = n + 1
-    n
 
 # Alla losa objekt som "sort/id".
 define losa(rd: text) -> [text] uses files:

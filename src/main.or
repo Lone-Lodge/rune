@@ -142,14 +142,7 @@ define cmd_pack() uses files, console:
     if n < 0:
         print_line("kunde inte skriva packen - inget rort")
     else:
-        print_line("packade {n} objekt")
-
-define cmd_gc() uses files, console:
-    n = gc(root())
-    if n is 0:
-        print_line("inget skrap")
-    else:
-        print_line("tog bort {n} objekt som ingen commit nar")
+        print_line("packade {n} objekt, resten ar borta")
 
 define cmd_fsck() uses files, console:
     edit n = 0
@@ -224,9 +217,6 @@ define main() -> number uses files, console, clock, env, net:
     else if cmd is "pack":
         if need_repo():
             cmd_pack()
-    else if cmd is "gc":
-        if need_repo():
-            cmd_gc()
     else if cmd is "fsck":
         if need_repo():
             cmd_fsck()
