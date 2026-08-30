@@ -134,6 +134,24 @@ check "det som inte matchar ar kvar" "$("$RUNE" status | grep -c 'sub/b.txt')" "
 check "tre filer kvar: .runeignore, a.txt och sub/b.txt" "$("$RUNE" status | wc -l)" "3"
 cd "$T"
 
+# Komprimeringen: text ska krympa, slumpdata ska lagras rakt av och
+# ALDRIG vaxa av forsoket.
+mkdir -p "$T/kz"; cd "$T/kz"
+echo "== komprimeringen =="
+"$RUNE" init >/dev/null
+for q in $(seq 1 3000); do echo "public define nagot(x: number) -> number = x + 1"; done > text.txt
+python -c "import os;open('slump.bin','wb').write(os.urandom(400000))"
+"$RUNE" add . >/dev/null; "$RUNE" commit ett >/dev/null; "$RUNE" pack >/dev/null
+PACK=$(python -c "import glob,os;print(os.path.getsize(glob.glob('.rune/pack/*.pack')[0]))")
+check "packen ar mindre an radatan" "$([ "$PACK" -lt 500000 ] && echo ja || echo nej)" "ja"
+check "och storre an bara slumpdelen" "$([ "$PACK" -gt 400000 ] && echo ja || echo nej)" "ja"
+H=$(cat .rune/refs/heads/main)
+S1=$(md5 text.txt); S2=$(md5 slump.bin)
+rm text.txt slump.bin; "$RUNE" checkout "$H" >/dev/null
+check "texten ur den komprimerade packen" "$(md5 text.txt)" "$S1"
+check "binaren ur samma pack" "$(md5 slump.bin)" "$S2"
+cd "$T"
+
 echo "== skrapet =="
 # Ett add som aldrig blev en commit lamnar sina chunkar kvar. Man sparar,
 # koar, sparar igen - och ingenting stadade det forut.

@@ -361,17 +361,38 @@ filsystem med 4 KB-kluster, och att SKAPA en fil ar det dyra pa Windows.
     rune pack   skriver om allt nabart till EN pack och tar bort resten
 
     .rune/pack/<n>.pack    kropparna, en efter en
-    .rune/pack/<n>.idx     "id<TAB>sort<TAB>start<TAB>langd", en per rad
+    .rune/pack/<n>.idx     "id<TAB>sort<TAB>start<TAB>lagrad<TAB>ra", en per rad
+
+**Tva langder**: hur manga bytes kroppen tar i packen, och hur stor den ar
+i sanning. Ar de lika ligger den okomprimerad.
 
 Id:t ar fortfarande hashen av kroppen, sa en pack ar en LAGRINGSFORM och
 inte ett nytt format. Samma repo kan ha bade losa objekt och packar, och
 den som laser behover inte veta vilket det ar.
 
-Matt pa 2000 filer a 2 KB, alltsa 4000 KB okomprimerbar data:
+### Komprimering
 
-    losa objekt   12343 KB      (4005 filer)
-    packat         4618 KB      (5 filer)
+Varje objekt provas for sig och lagras rakt av nar komprimeringen inte
+vann. En .uasset-chunk VAXER av att komprimeras och ska inte betala for
+det. Kompressorn ar `compress`-orben: LZ77 over ett 64 KB-fonster, inte
+zlib och inte kompatibel med det. Vi skriver och laser vara egna bytes, sa
+det finns inget utbytesformat att folja, och hela DEFLATE ar det mesta av
+koden for den sista tredjedelen av vinsten.
+
+    2000 filer a 2 KB, OKOMPRIMERBAR slumpdata
+    losa objekt   12343 KB   (4005 filer)
+    packat         4618 KB   (5 filer)
     git efter gc   4419 KB
+
+    117 filer riktig kallkod, 2689 KB
+    losa objekt    2824 KB
+    packat         1270 KB
+    git efter gc    811 KB
+
+Pa slumpdata ar vi i praktiken jamsides med git. Pa text ar git 1,6 gangar
+battre, och skillnaden ar entropikodning: zlib Huffman-kodar sina literaler
+medan var kostar en byte styck. Det ar den sista biten, och den ar ocksa
+den dyraste att skriva.
 
 Packen tar bara det NABARA, sa skrap kommer aldrig in i en - det ar darfor
 det inte behovs nagon gc for packar. Gamla packar och losa objekt tas bort

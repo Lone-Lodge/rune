@@ -14,6 +14,7 @@
 # Chunk-id ar hashen av det OKOMPRIMERADE innehallet. Darfor kan komprimering
 # laggas till senare som en ren lagringstransform utan att ett enda id andras.
 
+use compress
 use encoding
 use file
 use os
@@ -125,7 +126,12 @@ public define put_object(rune_dir: text, sort: text, body: text) -> text uses fi
 # bredvid som sager var var och en borjar:
 #
 #   .rune/pack/<n>.pack    kropparna, en efter en
-#   .rune/pack/<n>.idx     "id<TAB>sort<TAB>start<TAB>langd", en per rad
+#   .rune/pack/<n>.idx     "id<TAB>sort<TAB>start<TAB>lagrad<TAB>ra", en per rad
+#
+# TVA langder: hur manga bytes kroppen tar i packen, och hur stor den ar i
+# sanning. Ar de lika ligger den okomprimerad. Varje objekt provas for sig
+# och lagras rakt av nar komprimeringen inte vann - en .uasset-chunk VAXER
+# av att komprimeras, och den ska inte betala for det.
 #
 # Id:t ar fortfarande hashen av kroppen, sa en pack ar en LAGRINGSFORM och
 # inte ett nytt format. Samma repo kan ha bade losa objekt och packar, och
@@ -146,8 +152,8 @@ define pack_index(rune_dir: text) -> table of text uses files:
                 bas = text_of(bytes_part(bytes_of(f), 0, byte_count(f) - 4))
                 loop rad in read_lines(pd + "/" + f):
                     d = split(rad, tab())
-                    if length(d) >= 4:
-                        m[d[1] + "/" + d[0]] = bas + tab() + d[2] + tab() + d[3]
+                    if length(d) >= 5:
+                        m[d[1] + "/" + d[0]] = bas + tab() + d[2] + tab() + d[3] + tab() + d[4]
     slot_set("rune:pack", m)
     m
 
@@ -165,6 +171,7 @@ define from_pack(rune_dir: text, sort: text, id: text) -> text uses files:
     if seek(h, int_from_text(d[1])) is not 0:
         return ""
     want = int_from_text(d[2])
+    ra = int_from_text(d[3])
     # read_chunk far ge farre bytes an man bad om, sa las tills det racker.
     edit bitar = []
     edit har = 0
@@ -176,7 +183,8 @@ define from_pack(rune_dir: text, sort: text, id: text) -> text uses files:
             break
         bitar = append(bitar, bit)
         har = har + bytes_count(bit)
-    join(bitar, "")
+    hel = join(bitar, "")
+    if want is ra then hel else unsqueeze(hel)
 
 public define get_object(rune_dir: text, sort: text, id: text) -> text uses files:
     p = object_path(rune_dir, sort, id)
@@ -198,7 +206,9 @@ public define object_size(rune_dir: text, sort: text, id: text) -> number uses f
     k = sort + "/" + id
     if not has(m, k):
         return 0 - 1
-    int_from_text(split(m[k], tab())[2])
+    # Den SANNA storleken, inte den lagrade. Allt utanfor packen raknar i
+    # riktiga bytes - offsets i en fil, langder i ett svar.
+    int_from_text(split(m[k], tab())[3])
 
 # --- filer in och ut ----------------------------------------------------
 # Gar en enda chunk inte att lagra ar hela receptet vardelost, sa "" ut
@@ -1012,9 +1022,15 @@ public define pack(root: text) -> number uses files:
     loop k in nycklar:
         d = split(k, "/")
         kropp = get_object(rd, d[0], d[1])
-        langd = bytes_count(kropp)
-        skrev = write_chunk(h, kropp)
-        rad = persisted(d[1] + tab() + d[0] + tab() + (at as text) + tab() + (langd as text))
+        ra = bytes_count(kropp)
+        # Komprimera, men bara om det vann. En redan komprimerad asset
+        # vaxer av ett forsok till, och da lagras den rakt av.
+        liten = squeeze(kropp)
+        vinst = bytes_count(liten) < ra
+        lagra = if vinst then liten else kropp
+        langd = if vinst then bytes_count(liten) else ra
+        skrev = write_chunk(h, lagra)
+        rad = persisted(d[1] + tab() + d[0] + tab() + (at as text) + tab() + (langd as text) + tab() + (ra as text))
         was = persist_on()
         rader = append(rader, rad)
         persist_off(was)
