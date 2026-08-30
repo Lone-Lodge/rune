@@ -498,14 +498,25 @@ public define commit(root: text, msg: text, author: text) -> text uses files, cl
             bild = map_remove(bild, entry_path(l))
         else:
             bild[entry_path(l)] = entry_blob(l)
+    id = write_commit(root, bild, author, msg)
+    write_file(rd + "/index", "")
+    id
+
+# Skriv manifestet, commiten och refen. Delad av `commit`, som bygger
+# bilden ur kon, och av `commit_file`, som byter EN sokvag. Bara den forra
+# ror kon - servern har ingen att ro ur.
+
+define write_commit(root: text, bild: table of text, author: text, msg: text) -> text uses files, clock:
+    rd = rune_dir(root)
     manifest = put_object(rd, "manifests", join(rader_av(bild), "\n"))
     parent = head_commit(root)
     par = if is_empty(parent) then "-" else parent
     nl = text_of([10])
     body = "parent {par}" + nl + "manifest {manifest}" + nl + "author {author}" + nl + "time {now_unix()}" + nl + nl + msg
     id = put_object(rd, "commits", body)
+    if is_empty(manifest) or is_empty(id):
+        return ""
     write_file(rd + "/" + head_ref(root), id)
-    write_file(rd + "/index", "")
     id
 
 # Ett falt ur en commit-kropp: raden som borjar med `name `, utan prefixet.
@@ -693,6 +704,53 @@ public define apply_locks(root: text, me: text, forra: [text]) uses files:
             fritt = set_readonly(root + "/" + p, false)
     loop p, agare in nu:
         st = set_readonly(root + "/" + p, agare is not me)
+
+# --- att SKRIVA in i lagret utifran --------------------------------------
+# Ett innehall in, en commit ut. Ingen ko inblandad, och det ar avsiktligt:
+# kon ar en delad fil, och en server som stagar at en klient hade lagt
+# nagon annans halvfardiga arbete i din commit. En skrivning ar en commit.
+
+public type Skrivet: id: text, fel: text
+
+# Lagra ett innehall som redan ligger i minnet. Syskon till put_file, som
+# strommar fran disk - har ar bytesen redan har, sa fonstret vore bara
+# omvag. Samma gransregel, samma id.
+define put_text(rune_dir: text, body: text) -> text uses files:
+    b = bytes_of(body)
+    cuts = chunk_offsets(b)
+    edit ids = []
+    edit start = 0
+    loop i in 0 until length(cuts):
+        stop = cuts[i]
+        ids = append(ids, put_object(rune_dir, "chunks", text_of(bytes_part(b, start, stop))))
+        start = stop
+    if not chunk_ids_ok(ids):
+        return ""
+    put_object(rune_dir, "blobs", blob_body(ids))
+
+# Skriv en sokvag och committa den. Lassparren ligger HAR och inte i den
+# som svarar pa requesten - annars gar den att ga runt genom att anropa
+# lagret direkt, precis som for `add`.
+#
+# Ar innehallet redan det HEAD har blir det ingen commit. En redigerare
+# som sparar utan att ha andrat nagot ska inte fylla historien.
+public define commit_file(root: text, rel: text, body: text, author: text, msg: text) -> Skrivet uses files, clock:
+    held = lock_owner(root, rel)
+    if not is_empty(held) and held is not author:
+        return Skrivet{id: "", fel: "last av {held}"}
+    rd = rune_dir(root)
+    huvud = head_commit(root)
+    edit bild = karta_av(commit_manifest(root, huvud))
+    blob = put_text(rd, body)
+    if is_empty(blob):
+        return Skrivet{id: "", fel: "kunde inte lagras"}
+    if vid(bild, rel) is blob:
+        return Skrivet{id: huvud, fel: ""}
+    bild[rel] = blob
+    id = write_commit(root, bild, author, msg)
+    if is_empty(id):
+        return Skrivet{id: "", fel: "kunde inte lagras"}
+    Skrivet{id: id, fel: ""}
 
 # --- att lasa ur lagret utifran ------------------------------------------
 # Innehallsadressering ger SLUMPVIS LASNING gratis. Ett recept plus

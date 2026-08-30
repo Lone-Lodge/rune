@@ -133,6 +133,30 @@ check "okand sokvag ger 404" "$(curl -s -o /dev/null -w '%{http_code}' -H "$AUTH
 check "hist ger filens versioner" "$(curl -s -H "$AUTH" "$URL/hist?path=text.md" | wc -l)" "3"
 rm -f hel.tmp bit.tmp
 
+echo "== skriva in i lagret utifran =="
+# Ett innehall in, en commit ut. Ingen ko: den ar en delad fil, och en
+# server som stagar at en klient hade lagt nagon annans arbete i din commit.
+cd "$T/a"
+python -c "
+import os
+b = bytearray(os.urandom(300000))
+b[1000:1004] = b'\r\n\r\n'   # sekvensen som kapar en naiv HTTP-lasare
+open('ny.dat','wb').write(bytes(b))"
+C1=$(curl -s -H "$AUTH" -X POST --data-binary @ny.dat "$URL/file?path=under/ny.dat&who=alice&msg=forsta")
+curl -s -H "$AUTH" "$URL/file?path=under/ny.dat" -o ater.dat
+check "binar med CRLFCRLF tur och retur" "$(sha ater.dat)" "$(sha ny.dat)"
+C2=$(curl -s -H "$AUTH" -X POST --data-binary @ny.dat "$URL/file?path=under/ny.dat&who=alice&msg=igen")
+check "samma innehall ger ingen ny commit" "$C2" "$C1"
+# Lassparren ligger i lagret, inte i den som svarar pa requesten.
+printf 'under/ny.dat
+kollega' | curl -s -H "$AUTH" -X POST --data-binary @- "$URL/lock" >/dev/null
+check "annans las nekar skrivningen" "$(curl -s -o /dev/null -w '%{http_code}' -H "$AUTH" -X POST --data-binary @ny.dat "$URL/file?path=under/ny.dat&who=alice")" "409"
+has "och sager vem som haller den" "$(curl -s -H "$AUTH" -X POST --data-binary @ny.dat "$URL/file?path=under/ny.dat&who=alice")" "last av kollega"
+check "hallaren far skriva" "$(curl -s -o /dev/null -w '%{http_code}' -H "$AUTH" -X POST --data-binary "annat" "$URL/file?path=under/ny.dat&who=kollega&msg=min")" "200"
+printf 'under/ny.dat
+kollega' | curl -s -H "$AUTH" -X POST --data-binary @- "$URL/unlock" >/dev/null
+rm -f ny.dat ater.dat
+
 echo "== las over remoten =="
 # b ar en ANNAN person. Utan det testar man bara att man far ta om sitt
 # eget las, vilket man ska fa.

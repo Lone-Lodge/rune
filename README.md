@@ -188,7 +188,7 @@ lokalt kan aldrig saga att nagon ANNAN haller filen, och da ar det ingen
 sparr utan en anteckning. Den lokala lasfilen blir en cache som `add` far
 sin sparr ur.
 
-## Lasa ur lagret utan att kanna det
+## Lasa och skriva utan att kanna lagret
 
 Med bara `/obj/<sort>/<id>` maste en lasare kanna hela objektmodellen -
 commit, manifest, blob, chunkar - for att komma at en enda fil. Tre
@@ -222,6 +222,29 @@ filen ar, och det som vaxer ar storleksfragor - inte lasningar.
 Servern har aldrig skrivit ut nagon fil till sin egen arbetsyta. Den
 svarar ur objekten, och det ar det som gor rune till ett lager under
 nagon annans program i stallet for ett verktyg bredvid det.
+
+### Skriva
+
+    POST /file?path=<sokvag>&who=<namn>&msg=<text>    kroppen ar innehallet
+
+**Ett innehall in, en commit ut.** Ingen ko ar inblandad, och det ar
+avsiktligt: kon ar en delad fil, och en server som stagar at en klient
+hade lagt nagon annans halvfardiga arbete i din commit.
+
+Ar innehallet redan det HEAD har blir det ingen commit - en redigerare som
+sparar utan att ha andrat nagot ska inte fylla historien. Svaret ar
+commit-id:t i bada fallen.
+
+Lassparren ligger i lagret och inte i den som svarar pa requesten, precis
+som for `add`. Haller nagon annan sokvagen svarar servern 409 med vem det
+ar. `who` ar samma sjalvangivna namn som lasen bar: hemligheten ar en
+dorrnyckel, inte en identitet.
+
+Kroppen lases som exakt Content-Length bytes, sa en binar som rakar
+innehalla `
+
+` overlever. Sviten skriver en 300 kB-binar med den
+sekvensen i sig och laser tillbaka den byte for byte.
 
 ## Statcachen
 
