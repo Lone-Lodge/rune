@@ -20,6 +20,9 @@
 #   POST /unlock             "vag\nagare"      -> "" om ledig, annars hallaren
 
 use rune
+# Bara de tre: `ok` och `close` heter samma sak i net, och det ar
+# SOCKETARNAS som ska galla har.
+use file (open_write, write_chunk, close_file)
 use net
 use os
 use text
@@ -31,30 +34,78 @@ define head_end() -> text = text_of([13, 10, 13, 10])
 # --- server -------------------------------------------------------------
 
 # Las tills hela huvudet kommit, och sedan exakt sa manga bytes kroppen
-# lovade. Returnerar [huvud, kropp]. Kroppen skivas ur BYTES, aldrig ur en
-# text-split: den kan innehalla vad som helst.
-define read_request(conn: number) -> [text] uses net:
+# lovade.
+#
+# En SKRIVNING gar rakt till disk medan den tas emot. Alla andra kroppar ar
+# sma - en idlista, en ref, en lasrad, en chunk - och far ligga i minnet.
+# Att bygga en stor kropp i minnet kostade tjugo ganger sin egen storlek
+# och lamnades aldrig tillbaka: en 20 MB-kropp tog servern till 400 MB,
+# och sex av dem till 2,6 GB.
+type Request: head: text, body: text, fil: text
+
+define read_request(conn: number, root: text) -> Request uses net, files:
     edit raw = ""
     loop:
         if contains(raw, head_end()):
             break
         chunk = recv(conn, 65536)
         if timed_out(chunk) or chunk is "":
-            return ["", ""]
+            return Request{head: "", body: "", fil: ""}
         raw = raw + chunk
     rb = bytes_of(raw)
     cut = find_head_end(rb)
     head = text_of(bytes_part(rb, 0, cut))
-    edit body = bytes_part(rb, cut + 4, bytes_count(rb))
     want = content_length(head)
+    forst = text_of(bytes_part(rb, cut + 4, bytes_count(rb)))
+    if till_disk(head):
+        return Request{head: head, body: "", fil: stromma(conn, root, forst, want)}
+    edit bitar = [forst]
+    edit har = byte_count(forst)
     loop:
-        if bytes_count(body) >= want:
+        if har >= want:
             break
         more = recv(conn, 65536)
         if timed_out(more) or more is "":
             break
-        body = bytes_concat(body, bytes_of(more))
-    [head, text_of(bytes_part(body, 0, want))]
+        bitar = append(bitar, more)
+        har = har + byte_count(more)
+    hel = join(bitar, "")
+    # Skivas bara om vi faktiskt fick for mycket. Normalfallet ar exakt
+    # ratt manga bytes, och da ror vi inte kroppen alls.
+    Request{head: head, body: if har > want then text_of(bytes_part(bytes_of(hel), 0, want)) else hel, fil: ""}
+
+# Ar det en skrivning? Beslutet tas ur HUVUDET, alltsa innan kroppen ens
+# borjat lasas - det ar hela poangen med att lasa huvudet forst.
+define till_disk(head: text) -> truth:
+    rl = request_line(head)
+    if length(rl) < 2:
+        return false
+    rl[0] is "POST" and length(segments(rl[1])) is 1 and segments(rl[1])[0] is "file"
+
+# Kroppen till en fil, block for block. Sokvagen ut, eller "" om nagot gick
+# fel. Namnet ar fast: servern tar en request i taget.
+define stromma(conn: number, root: text, forst: text, want: number) -> text uses net, files:
+    ut = rune_dir(root) + "/inkommande"
+    h = open_write(ut)
+    if not ok(h):
+        return ""
+    defer close_file(h)
+    # Rakningen kommer ur write_chunk, som anda sager hur manga bytes den
+    # skrev. `byte_count` hade varit det uppenbara valet men gor en
+    # byteslista av sitt argument - atta byte per byte, en gang per
+    # mottaget block. Det ensamt var 160 MB per 20 MB-kropp.
+    edit har = if is_empty(forst) then 0 else write_chunk(h, forst)
+    loop:
+        if har >= want:
+            break
+        more = recv(conn, 65536)
+        if timed_out(more) or more is "":
+            break
+        skrev = write_chunk(h, more)
+        if skrev < 0:
+            return ""
+        har = har + skrev
+    if har is want then ut else ""
 
 # Offset for "\r\n\r\n" i bytes. -1 om den inte finns.
 define find_head_end(b: [number]) -> number:
@@ -112,13 +163,16 @@ define bearer(head: text) -> text:
 # send_raw och INTE send: net.send tar langden med strlen och kapar darfor
 # vid forsta nollbyten. Ett svar med en chunk ur en .uasset kom fram som
 # sina forsta trehundra bytes, och pullen skrev tyst en trasig fil.
-define answer_code(conn: number, code: number, reason: text, body: text) uses net:
-    n = bytes_count(bytes_of(body))
+define answer_code(conn: number, code: number, reason: text, bitar: [text]) uses net:
+    edit n = 0
+    loop b in bitar:
+        n = n + bytes_count(b)
     head = "HTTP/1.1 {code} {reason}" + crlf() + "Content-Length: {n}" + crlf() + "Content-Type: application/octet-stream" + crlf() + "Connection: close" + crlf() + crlf()
-    sent = send_raw(conn, head + body)
-
-define answer(conn: number, body: text) uses net:
-    answer_code(conn, 200, "OK", body)
+    sent = send_raw(conn, head)
+    # En bit i taget ut. Att foga ihop dem forst hade byggt hela svaret i
+    # minnet igen, och det var precis det bitarna finns for att slippa.
+    loop b in bitar:
+        skickat = send_raw(conn, b)
 
 # Sokvagens segment efter den ledande snedstrecket.
 define segments(path: text) -> [text]:
@@ -159,9 +213,12 @@ define safe_id(id: text) -> truth:
 # Ett svar bar sin KOD, inte bara sin kropp. Utan koden gar "filen fanns
 # inte" inte att skilja fran "filen ar tom", och det ar precis den
 # skillnaden en lasare utifran behover.
-type Svar: kod: number, kropp: text
+# Kroppen ar BITAR i ordning, inte en fardig text. Ett filsvar kan da
+# skrivas ut bit for bit, och behover aldrig ligga hopfogat i minnet.
+type Svar: kod: number, bitar: [text]
 
-define ok_svar(kropp: text) -> Svar = Svar{kod: 200, kropp: kropp}
+define ok_svar(kropp: text) -> Svar = Svar{kod: 200, bitar: [kropp]}
+define fel_svar(kod: number, kropp: text) -> Svar = Svar{kod: kod, bitar: [kropp]}
 
 define reason_of(kod: number) -> text:
     if kod is 200:
@@ -220,7 +277,9 @@ define rader_svar(rader: [text]) -> text:
 define tal(t: text, standard: number) -> number:
     if is_empty(t) then standard else int_from_text(t)
 
-define handle(root: text, head: text, body: text) -> Svar uses files, clock:
+define handle(root: text, req: Request) -> Svar uses files, clock:
+    head = req.head
+    body = req.body
     rl = request_line(head)
     if length(rl) < 2:
         return ok_svar("")
@@ -282,7 +341,7 @@ define handle(root: text, head: text, body: text) -> Svar uses files, clock:
     if method is "GET" and length(seg) is 1 and seg[0] is "tree":
         c = at_commit(root, query_arg(path, "at"))
         if is_empty(c):
-            return Svar{kod: 404, kropp: "ingen sadan commit"}
+            return fel_svar(404, "ingen sadan commit")
         return ok_svar(rader_svar(commit_manifest(root, c)))
 
     if method is "GET" and length(seg) is 1 and seg[0] is "hist":
@@ -292,7 +351,7 @@ define handle(root: text, head: text, body: text) -> Svar uses files, clock:
         rel = url_decode(query_arg(path, "path"))
         c = at_commit(root, query_arg(path, "at"))
         if is_empty(c):
-            return Svar{kod: 404, kropp: "ingen sadan commit"}
+            return fel_svar(404, "ingen sadan commit")
         till_arg = query_arg(path, "to")
         # `to` utelamnat betyder "resten", och DA maste storleken tas fram
         # - vilket kostar en storleksfraga per chunk. Ar den given behovs
@@ -301,11 +360,11 @@ define handle(root: text, head: text, body: text) -> Svar uses files, clock:
         if is_empty(till_arg):
             n = file_size_at(root, c, rel)
             if n < 0:
-                return Svar{kod: 404, kropp: "fanns inte i den commiten"}
-            return ok_svar(file_range(root, c, rel, tal(query_arg(path, "from"), 0), n))
+                return fel_svar(404, "fanns inte i den commiten")
+            return Svar{kod: 200, bitar: file_parts(root, c, rel, tal(query_arg(path, "from"), 0), n)}
         if not has_path(root, c, rel):
-            return Svar{kod: 404, kropp: "fanns inte i den commiten"}
-        return ok_svar(file_range(root, c, rel, tal(query_arg(path, "from"), 0), int_from_text(till_arg)))
+            return fel_svar(404, "fanns inte i den commiten")
+        return Svar{kod: 200, bitar: file_parts(root, c, rel, tal(query_arg(path, "from"), 0), int_from_text(till_arg))}
 
     # Skrivvagen. Ett innehall in, en commit ut - se commit_file om varfor
     # ingen ko ar inblandad. `who` ar den som skriver, samma sjalvangivna
@@ -313,14 +372,16 @@ define handle(root: text, head: text, body: text) -> Svar uses files, clock:
     if method is "POST" and length(seg) is 1 and seg[0] is "file":
         rel = url_decode(query_arg(path, "path"))
         if is_empty(rel):
-            return Svar{kod: 404, kropp: "ingen sokvag"}
+            return fel_svar(404, "ingen sokvag")
         who = url_decode(query_arg(path, "who"))
         msg = url_decode(query_arg(path, "msg"))
-        sk = commit_file(root, rel, body, if is_empty(who) then "okand" else who, if is_empty(msg) then rel else msg)
+        if is_empty(req.fil):
+            return fel_svar(409, "kroppen kom inte fram hel")
+        sk = commit_file(root, rel, req.fil, if is_empty(who) then "okand" else who, if is_empty(msg) then rel else msg)
         if is_empty(sk.id):
             # 409: nagon annan haller filen, eller disken sa nej. Bada ar
             # "din skrivning hande inte", och kroppen sager vilket.
-            return Svar{kod: 409, kropp: sk.fel}
+            return fel_svar(409, sk.fel)
         return ok_svar(sk.id + text_of([10]))
 
     if method is "GET" and length(seg) is 1 and seg[0] is "locks":
@@ -334,7 +395,7 @@ define handle(root: text, head: text, body: text) -> Svar uses files, clock:
         vem = trim(rader[1])
         return ok_svar(if seg[0] is "lock" then lock(root, vag, vem) else unlock(root, vag, vem))
 
-    Svar{kod: 404, kropp: ""}
+    fel_svar(404, "")
 
 
 # Servera tills processen stoppas. Ett svar per uppkoppling: pushar och
@@ -356,13 +417,13 @@ public define serve(root: text, port: number) uses net, files, clock, console:
         conn = accept(srv)
         if conn >= 0:
             timeout = set_timeout(conn, 30000)
-            hb = read_request(conn)
-            if not is_empty(hb[0]):
-                if secret_ok(root, bearer(hb[0])):
-                    sv = handle(root, hb[0], hb[1])
-                    answer_code(conn, sv.kod, reason_of(sv.kod), sv.kropp)
+            req = read_request(conn, root)
+            if not is_empty(req.head):
+                if secret_ok(root, bearer(req.head)):
+                    sv = handle(root, req)
+                    answer_code(conn, sv.kod, reason_of(sv.kod), sv.bitar)
                 else:
-                    answer_code(conn, 401, "Unauthorized", "fel eller saknad hemlighet")
+                    answer_code(conn, 401, "Unauthorized", ["fel eller saknad hemlighet"])
             stang = close(conn)
 
 # --- klient -------------------------------------------------------------

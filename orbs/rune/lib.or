@@ -712,36 +712,24 @@ public define apply_locks(root: text, me: text, forra: [text]) uses files:
 
 public type Skrivet: id: text, fel: text
 
-# Lagra ett innehall som redan ligger i minnet. Syskon till put_file, som
-# strommar fran disk - har ar bytesen redan har, sa fonstret vore bara
-# omvag. Samma gransregel, samma id.
-define put_text(rune_dir: text, body: text) -> text uses files:
-    b = bytes_of(body)
-    cuts = chunk_offsets(b)
-    edit ids = []
-    edit start = 0
-    loop i in 0 until length(cuts):
-        stop = cuts[i]
-        ids = append(ids, put_object(rune_dir, "chunks", text_of(bytes_part(b, start, stop))))
-        start = stop
-    if not chunk_ids_ok(ids):
-        return ""
-    put_object(rune_dir, "blobs", blob_body(ids))
-
 # Skriv en sokvag och committa den. Lassparren ligger HAR och inte i den
 # som svarar pa requesten - annars gar den att ga runt genom att anropa
 # lagret direkt, precis som for `add`.
 #
 # Ar innehallet redan det HEAD har blir det ingen commit. En redigerare
 # som sparar utan att ha andrat nagot ska inte fylla historien.
-public define commit_file(root: text, rel: text, body: text, author: text, msg: text) -> Skrivet uses files, clock:
+public define commit_file(root: text, rel: text, fran: text, author: text, msg: text) -> Skrivet uses files, clock:
     held = lock_owner(root, rel)
     if not is_empty(held) and held is not author:
         return Skrivet{id: "", fel: "last av {held}"}
     rd = rune_dir(root)
     huvud = head_commit(root)
     edit bild = karta_av(commit_manifest(root, huvud))
-    blob = put_text(rd, body)
+    # `fran` ar en FIL och inte ett innehall: den som tar emot skrivningen
+    # lade den pa disk medan den kom in, sa put_file kan stromma genom sitt
+    # fonster. Ett innehall i minnet hade kostat atta byte per byte.
+    blob = put_file(rd, fran)
+    borta = remove_file(fran)
     if is_empty(blob):
         return Skrivet{id: "", fel: "kunde inte lagras"}
     if vid(bild, rel) is blob:
@@ -777,13 +765,17 @@ public define file_size_at(root: text, id: text, rel: text) -> number uses files
         n = n + object_size(rd, "chunks", cid)
     n
 
-# Bytes [from, to) ur filen vid en commit. "" om sokvagen inte fanns da.
-# `to` bortom filens slut ar inget fel - da kommer det som finns.
-public define file_range(root: text, id: text, rel: text, from: number, to: number) -> text uses files:
+# Bytes [from, to) ur filen vid en commit, som BITAR i ordning. Tom lista
+# om sokvagen inte fanns da. `to` bortom filens slut ar inget fel.
+#
+# Bitar och inte en fardig text: den som skickar dem kan skriva ut dem en
+# och en, och da behover hela svaret aldrig ligga hopfogat i minnet. Att
+# foga ihop 20 MB ur 320 bitar kostade 200 MB som aldrig lamnades tillbaka.
+public define file_parts(root: text, id: text, rel: text, from: number, to: number) -> [text] uses files:
     rd = rune_dir(root)
     blob = lookup(commit_manifest(root, id), rel)
     if is_empty(blob) or to <= from:
-        return ""
+        return []
     edit bitar = []
     edit at = 0
     loop cid in blob_chunks(rd, blob):
@@ -795,12 +787,19 @@ public define file_range(root: text, id: text, rel: text, from: number, to: numb
         langd = object_size(rd, "chunks", cid)
         slut = at + langd
         if slut > from:
-            b = bytes_of(get_object(rd, "chunks", cid))
-            forst = if from > at then from - at else 0
-            sist = if to < slut then to - at else langd
-            bitar = append(bitar, text_of(bytes_part(b, forst, sist)))
+            hel = get_object(rd, "chunks", cid)
+            # Bara chunkarna i KANTERNA skivas. En chunk som ligger helt
+            # inne i intervallet gar in som den ar, och slipper darmed
+            # byteslistan - som kostar atta byte per byte.
+            if at >= from and slut <= to:
+                bitar = append(bitar, hel)
+            else:
+                b = bytes_of(hel)
+                borjan = if from > at then from - at else 0
+                slutet = if to < slut then to - at else langd
+                bitar = append(bitar, text_of(bytes_part(b, borjan, slutet)))
         at = slut
-    join(bitar, "")
+    bitar
 
 # --- lagrets sundhet ----------------------------------------------------
 # Varje objekts INNEHALL mot dess NAMN. Namnet ar hashen av innehallet, sa

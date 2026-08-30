@@ -241,10 +241,24 @@ ar. `who` ar samma sjalvangivna namn som lasen bar: hemligheten ar en
 dorrnyckel, inte en identitet.
 
 Kroppen lases som exakt Content-Length bytes, sa en binar som rakar
-innehalla `
+innehalla `\r\n\r\n` overlever. Sviten skriver en 300 kB-binar med
+den sekvensen i sig och laser tillbaka den byte for byte.
 
-` overlever. Sviten skriver en 300 kB-binar med den
-sekvensen i sig och laser tillbaka den byte for byte.
+### Servern haller inte kroppen i minnet
+
+En skrivning gar rakt till disk medan den tas emot, och ett filsvar
+skickas ut bit for bit. Ingen av dem bygger nagot helt i minnet, och det
+ar inte finlir: Orion lamnar inte tillbaka det ett varv allokerar, sa en
+server som bygger kroppar i minnet vaxer tills den dor.
+
+    20 MB in     7,8 s och 26 GB  ->  1,4 s och 66 MB
+    20 MB ut     +378 MB          ->  +23 MB
+    120 MB in och 100 MB ut           182 MB totalt
+
+Tre saker gjorde de 26 GB: `bytes_concat` i mottagningsslingan kopierade
+allt hittills for varje block, `byte_count` byggde en byteslista bara for
+att rakna langden pa varje block, och kroppen fogades ihop till en enda
+text innan den chunkades. Alla tre ar borta.
 
 ## Statcachen
 
