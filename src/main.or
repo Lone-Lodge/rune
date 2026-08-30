@@ -137,6 +137,13 @@ define cmd_secret(varde: text) uses files, console:
 define cmd_stat(path: text) uses files, console:
     print_line("{path}: {size_of(path)} bytes, {chunk_count(path)} chunkar")
 
+define cmd_pack() uses files, console:
+    n = pack(root())
+    if n < 0:
+        print_line("kunde inte skriva packen - inget rort")
+    else:
+        print_line("packade {n} objekt")
+
 define cmd_gc() uses files, console:
     n = gc(root())
     if n is 0:
@@ -214,6 +221,9 @@ define main() -> number uses files, console, clock, env, net:
             print_line(pull(root()))
     else if cmd is "serve":
         serve(root(), if length(args) > 2 then int_from_text(args[2]) else 7420)
+    else if cmd is "pack":
+        if need_repo():
+            cmd_pack()
     else if cmd is "gc":
         if need_repo():
             cmd_gc()

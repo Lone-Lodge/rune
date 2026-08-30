@@ -77,6 +77,7 @@ forsvinner.
     rune stat <fil>             # visa chunkningen utan att lagra
     rune fsck                   # las varje objekt och jamfor med dess id
     rune gc                     # ta bort det ingen commit nar
+    rune pack                   # skriv om lagret till en enda pack
 
 Ett commit-id far forkortas sa langt det ar entydigt, alltsa de tolv
 tecken `rune log` visar. Ar prefixet tvetydigt sager rune det i stallet
@@ -351,6 +352,34 @@ kopian pekar raderna i receptet in i minne som nasta varv skriver over.
 
 Arenan slas pa forst nar filen inte rymdes i ett fonster. En liten fil har
 inget varv att lamna tillbaka och betalar darfor ingenting.
+
+## Packen
+
+Ett objekt per fil kostar bade plats och tid. En 2 KB-chunk tar 4 KB pa ett
+filsystem med 4 KB-kluster, och att SKAPA en fil ar det dyra pa Windows.
+
+    rune pack   skriver om allt nabart till EN pack och tar bort resten
+
+    .rune/pack/<n>.pack    kropparna, en efter en
+    .rune/pack/<n>.idx     "id<TAB>sort<TAB>start<TAB>langd", en per rad
+
+Id:t ar fortfarande hashen av kroppen, sa en pack ar en LAGRINGSFORM och
+inte ett nytt format. Samma repo kan ha bade losa objekt och packar, och
+den som laser behover inte veta vilket det ar.
+
+Matt pa 2000 filer a 2 KB, alltsa 4000 KB okomprimerbar data:
+
+    losa objekt   12343 KB      (4005 filer)
+    packat         4618 KB      (5 filer)
+    git efter gc   4419 KB
+
+Packen tar bara det NABARA, sa skrap kommer aldrig in i en - det ar darfor
+det inte behovs nagon gc for packar. Gamla packar och losa objekt tas bort
+EFTERAT, aldrig fore: gar skrivningen fel star repot kvar som det var.
+
+Och de tomma objektmapparna tas bort. Tva hex som mapp ger upp till 256 per
+sort, och en tom mapp kostar ett kluster precis som en fil - tusen av dem
+var fyra av de sju megabyte som lag kvar efter forsta packningen.
 
 ## Skrapet
 

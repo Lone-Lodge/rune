@@ -114,17 +114,91 @@ public define put_object(rune_dir: text, sort: text, body: text) -> text uses fi
             return ""
     id
 
+# --- packar --------------------------------------------------------------
+# Ett objekt per fil kostar bade plats och tid. En 2 KB-chunk tar 4 KB pa
+# ett filsystem med 4 KB-kluster, och att SKAPA en fil ar det dyra pa
+# Windows. Matt: 2000 filer blev 4005 objekt, 4281 KB innehall och 12399 KB
+# pa disk - alltsa nastan tre ganger - och `add` av 3200 filer tog 47
+# sekunder mot gits 10.
+#
+# En PACK ar manga kroppar efter varandra i en fil, med ett register
+# bredvid som sager var var och en borjar:
+#
+#   .rune/pack/<n>.pack    kropparna, en efter en
+#   .rune/pack/<n>.idx     "id<TAB>sort<TAB>start<TAB>langd", en per rad
+#
+# Id:t ar fortfarande hashen av kroppen, sa en pack ar en LAGRINGSFORM och
+# inte ett nytt format. Samma repo kan ha bade losa objekt och packar, och
+# den som laser behover inte veta vilket det ar.
+public define pack_dir(rune_dir: text) -> text = rune_dir + "/pack"
+
+# Registret over ALLA packar. Byggt en gang per process och sparat i en
+# slot: att lasa registerfilerna en gang per objekt hade gjort varje
+# uppslagning till en genomlasning.
+define pack_index(rune_dir: text) -> table of text uses files:
+    if slot_has("rune:pack"):
+        return slot_get("rune:pack")
+    edit m: table of text = {}
+    pd = pack_dir(rune_dir)
+    if is_dir(pd) is not 0:
+        loop f in list_dir(pd):
+            if ends_with(f, ".idx"):
+                bas = text_of(bytes_part(bytes_of(f), 0, byte_count(f) - 4))
+                loop rad in read_lines(pd + "/" + f):
+                    d = split(rad, tab())
+                    if length(d) >= 4:
+                        m[d[1] + "/" + d[0]] = bas + tab() + d[2] + tab() + d[3]
+    slot_set("rune:pack", m)
+    m
+
+# Kroppen ur en pack, "" om objektet inte ligger i nagon.
+define from_pack(rune_dir: text, sort: text, id: text) -> text uses files:
+    m = pack_index(rune_dir)
+    k = sort + "/" + id
+    if not has(m, k):
+        return ""
+    d = split(m[k], tab())
+    h = open_read(pack_dir(rune_dir) + "/" + d[0] + ".pack")
+    if not ok(h):
+        return ""
+    defer close(h)
+    if seek(h, int_from_text(d[1])) is not 0:
+        return ""
+    want = int_from_text(d[2])
+    # read_chunk far ge farre bytes an man bad om, sa las tills det racker.
+    edit bitar = []
+    edit har = 0
+    loop:
+        if har >= want:
+            break
+        bit = read_chunk(h, want - har)
+        if is_end(bit):
+            break
+        bitar = append(bitar, bit)
+        har = har + bytes_count(bit)
+    join(bitar, "")
+
 public define get_object(rune_dir: text, sort: text, id: text) -> text uses files:
-    read_file(object_path(rune_dir, sort, id))
+    p = object_path(rune_dir, sort, id)
+    if file_exists(p) is not 0 then read_file(p) else from_pack(rune_dir, sort, id)
 
 public define has_object(rune_dir: text, sort: text, id: text) -> truth uses files:
-    file_exists(object_path(rune_dir, sort, id)) is not 0
+    if file_exists(object_path(rune_dir, sort, id)) is not 0:
+        return true
+    has(pack_index(rune_dir), sort + "/" + id)
 
 # Ett objekts storlek utan att lasa det. Objekten ar OKOMPRIMERADE, sa en
 # chunkfils storlek ar chunkens langd. Det ar den egenskapen som gor bade
 # storleksfragan och slumpvis lasning gratis.
 public define object_size(rune_dir: text, sort: text, id: text) -> number uses files:
-    size_of(object_path(rune_dir, sort, id))
+    p = object_path(rune_dir, sort, id)
+    if file_exists(p) is not 0:
+        return size_of(p)
+    m = pack_index(rune_dir)
+    k = sort + "/" + id
+    if not has(m, k):
+        return 0 - 1
+    int_from_text(split(m[k], tab())[2])
 
 # --- filer in och ut ----------------------------------------------------
 # Gar en enda chunk inte att lagra ar hela receptet vardelost, sa "" ut
@@ -897,6 +971,74 @@ public define gc(root: text) -> number uses files:
                             n = n + 1
     n
 
+# Alla losa objekt som "sort/id".
+define losa(rd: text) -> [text] uses files:
+    edit ut = []
+    loop sort in ["chunks", "blobs", "manifests", "commits"]:
+        mapp = rd + "/" + sort
+        if is_dir(mapp) is not 0:
+            loop d in list_dirs(mapp):
+                if not is_empty(d):
+                    loop f in list_dir(mapp + "/" + d):
+                        if not is_empty(f):
+                            ut = append(ut, sort + "/" + d + f)
+    ut
+
+# Skriv om allt NABART till en enda pack och ta bort resten. Antal packade
+# objekt, eller -1 om packen inte gick att skriva.
+#
+# Packar bara det nabara, sa skrap kommer aldrig in i en pack - det ar
+# darfor det inte behovs nagon gc FOR packar. Gamla packar och losa objekt
+# tas bort efterat, aldrig fore: gar skrivningen fel star repot kvar som
+# det var.
+public define pack(root: text) -> number uses files:
+    rd = rune_dir(root)
+    lever = reachable(root)
+    # Nycklarna samlas FORE arenan slas pa - listan maste overleva svepen.
+    edit nycklar = []
+    loop k, v in lever:
+        nycklar = append(nycklar, k)
+    gamla = if is_dir(pack_dir(rd)) is not 0 then list_dir(pack_dir(rd)) else []
+    lossa = losa(rd)
+    mkdir_all(pack_dir(rd))
+    ny = pack_dir(rd) + "/" + (length(gamla) + 1 as text)
+    h = open_write(ny + ".pack")
+    if not ok(h):
+        return 0 - 1
+    edit rader = []
+    edit at = 0
+    edit n = 0
+    pa = arena_on()
+    loop k in nycklar:
+        d = split(k, "/")
+        kropp = get_object(rd, d[0], d[1])
+        langd = bytes_count(kropp)
+        skrev = write_chunk(h, kropp)
+        rad = persisted(d[1] + tab() + d[0] + tab() + (at as text) + tab() + (langd as text))
+        was = persist_on()
+        rader = append(rader, rad)
+        persist_off(was)
+        at = at + langd
+        n = n + 1
+        svept = arena_reset()
+    av = arena_off()
+    stangd = close(h)
+    write_lines(ny + ".idx", rader)
+    # Forst nu ar det tryggt att slappa det gamla.
+    loop f in gamla:
+        if not is_empty(f):
+            togs = remove_file(pack_dir(rd) + "/" + f)
+    loop k in lossa:
+        d = split(k, "/")
+        togs = remove_file(object_path(rd, d[0], d[1]))
+    # Och de tomma mapparna. Tva hex som mapp ger upp till 256 per sort, och
+    # en tom mapp kostar ett kluster precis som en fil: tusen av dem var
+    # fyra megabyte av de sju som lag kvar efter packningen.
+    loop sort in ["chunks", "blobs", "manifests", "commits"]:
+        if is_dir(rd + "/" + sort) is not 0:
+            bort = remove_tree(rd + "/" + sort)
+    n
+
 # --- lagrets sundhet ----------------------------------------------------
 # Varje objekts INNEHALL mot dess NAMN. Namnet ar hashen av innehallet, sa
 # den jamforelsen ar hela sanningen: stammer den inte ar filen inte det
@@ -910,15 +1052,16 @@ public define gc(root: text) -> number uses files:
 public define fsck(root: text) -> [text] uses files:
     rd = rune_dir(root)
     edit trasiga = []
-    loop sort in ["chunks", "blobs", "manifests", "commits"]:
-        mapp = rd + "/" + sort
-        if is_dir(mapp) is not 0:
-            loop d in list_dirs(mapp):
-                if not is_empty(d):
-                    loop f in list_dir(mapp + "/" + d):
-                        if not is_empty(f):
-                            if sha256(read_file(mapp + "/" + d + "/" + f)) is not d + f:
-                                trasiga = append(trasiga, sort + tab() + d + f)
+    # Bade de losa och de packade. Efter en `pack` ar objektmapparna TOMMA,
+    # och en fsck som bara tittade dar sa "sunt" utan att ha last nagot.
+    loop k in losa(rd):
+        d = split(k, "/")
+        if sha256(read_file(object_path(rd, d[0], d[1]))) is not d[1]:
+            trasiga = append(trasiga, d[0] + tab() + d[1])
+    loop k, v in pack_index(rd):
+        d = split(k, "/")
+        if sha256(from_pack(rd, d[0], d[1])) is not d[1]:
+            trasiga = append(trasiga, d[0] + tab() + d[1])
     trasiga
 
 # --- fragor som en yta behover ------------------------------------------

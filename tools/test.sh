@@ -159,6 +159,35 @@ check "koat overlever en gc" "$("$RUNE" status | wc -l)" "0"
 check "och lagret ar sunt" "$("$RUNE" fsck | grep -c 'sunt')" "1"
 cd "$T"
 
+echo "== packen =="
+# Ett objekt per fil kostar bade plats och tid. En pack ar manga kroppar
+# efter varandra med ett register bredvid.
+mkdir -p "$T/pk"; cd "$T/pk"
+"$RUNE" init >/dev/null
+python -c "
+import os
+for i in range(300):
+    d='d%02d'%(i%10); os.makedirs(d,exist_ok=True)
+    open(os.path.join(d,'f%03d.bin'%i),'wb').write(os.urandom(2048))"
+"$RUNE" add . >/dev/null; "$RUNE" commit ett >/dev/null
+FORE=$(du -sk .rune | cut -f1)
+"$RUNE" pack >/dev/null
+EFTER=$(du -sk .rune | cut -f1)
+check "packen tar mindre plats" "$([ "$EFTER" -lt "$FORE" ] && echo ja || echo nej)" "ja"
+check "och ar fa filer" "$([ "$(find .rune -type f | wc -l)" -lt 10 ] && echo ja || echo nej)" "ja"
+check "fsck laser packen ocksa" "$("$RUNE" fsck | grep -c 'sunt')" "1"
+check "tradet ar orort" "$("$RUNE" status | wc -l)" "0"
+H=$(cat .rune/refs/heads/main); rm -rf d00
+"$RUNE" checkout "$H" >/dev/null
+check "checkout ur packen" "$("$RUNE" status | wc -l)" "0"
+# En byte fel mitt i packen ska hittas, inte tigas ihjal.
+python -c "
+import glob
+p=glob.glob('.rune/pack/*.pack')[0]
+d=bytearray(open(p,'rb').read()); d[5000]^=0xFF; open(p,'wb').write(d)"
+check "fsck hittar skada i packen" "$("$RUNE" fsck | grep -c 'TRASIGT')" "1"
+cd "$T"
+
 echo "== lagrets sundhet =="
 mkdir -p "$T/sund"; cd "$T/sund"
 "$RUNE" init >/dev/null
