@@ -122,6 +122,18 @@ check "borttagningen ar ur ogonblicksbilden" "$(man | grep -c 'tva.txt')" "0"
 check "rent efter borttagningen" "$("$RUNE" status | wc -l)" "0"
 cd "$T"
 
+echo "== .runeignore med stjarna =="
+mkdir -p "$T/ign/sub/djup" "$T/ign/Saved"; cd "$T/ign"
+"$RUNE" init >/dev/null
+for f in a.txt a.log sub/b.log sub/b.txt sub/djup/c.log Saved/d.txt tmp.bak; do echo x > "$f"; done
+printf '*.log\nSaved/\n*.bak\n' > .runeignore
+check "stjarna tar filen i roten" "$("$RUNE" status | grep -c 'a.log')" "0"
+check "och langre ner ocksa" "$("$RUNE" status | grep -c 'c.log')" "0"
+check "prefix fungerar som forut" "$("$RUNE" status | grep -c 'Saved')" "0"
+check "det som inte matchar ar kvar" "$("$RUNE" status | grep -c 'sub/b.txt')" "1"
+check "tre filer kvar: .runeignore, a.txt och sub/b.txt" "$("$RUNE" status | wc -l)" "3"
+cd "$T"
+
 echo "== lagrets sundhet =="
 mkdir -p "$T/sund"; cd "$T/sund"
 "$RUNE" init >/dev/null

@@ -89,8 +89,17 @@ laggs bara om den saknas; vi skriver aldrig om nagons fil mer an sa.
 
 ## .runeignore
 
-En rad per monster, prefixmatchning pa den relativa sokvagen. `Saved/` tar
-allt darunder. Inga globbar. For ett Unreal-projekt racker:
+En rad per monster. Ett monster UTAN stjarna ar ett prefix pa den relativa
+sokvagen: `Saved/` tar allt darunder. Med stjarna matchas hela sokvagen,
+och `*` star for vilken foljd som helst - aven tom, aven over `/`:
+
+    *.log        varje .log var den an ligger
+    Saved/*      allt under Saved
+
+Inget annat monster. `?` och `[a-z]` har ingen bett om, och varje tecken
+till ar ett tecken den som laser filen maste minnas.
+
+For ett Unreal-projekt racker:
 
     Saved/
     Intermediate/
@@ -371,5 +380,5 @@ och innehallet: bakom brandvagg eller VPN.
 
 Ingen packning, inga grenar - bada uttalade beslut ovan, inte luckor.
 
-`.runeignore` matchar pa prefix och kan inga globbar. `Saved/` fungerar,
-`*.log` gor det inte.
+Servern ger ett svar per uppkoppling, sa en push oppnar en per objekt.
+Keep-alive ar den enda kvarvarande posten pa listan.

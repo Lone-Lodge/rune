@@ -335,10 +335,57 @@ define ignore_list(root: text) -> [text] uses files:
                 pats = append(pats, p)
     pats
 
+# `*` star for vilken foljd som helst, aven tom och aven over `/`. Inget
+# annat monster: `?` och `[a-z]` har ingen bett om, och varje tecken till
+# ar ett tecken den som laser .runeignore maste minnas.
+#
+#   *.log        varje .log var den an ligger
+#   Saved/*      allt under Saved
+#
+# Klassisk tvapekarmatchning: vid en stjarna kommer man ihag var den stod
+# och hur langt in i strangen man var, och vid en krock backar man dit och
+# later stjarnan svalja ett tecken till.
+define glob_match(pat: text, s: text) -> truth:
+    p = bytes_of(pat)
+    t = bytes_of(s)
+    np = bytes_count(p)
+    nt = bytes_count(t)
+    edit i = 0
+    edit j = 0
+    edit star = 0 - 1
+    edit mark = 0
+    loop:
+        if i >= nt:
+            break
+        if j < np and byte_at(p, j) is 42:
+            star = j
+            mark = i
+            j = j + 1
+        else if j < np and byte_at(p, j) is byte_at(t, i):
+            i = i + 1
+            j = j + 1
+        else if star >= 0:
+            j = star + 1
+            mark = mark + 1
+            i = mark
+        else:
+            return false
+    loop:
+        if j < np and byte_at(p, j) is 42:
+            j = j + 1
+        else:
+            break
+    j >= np
+
+# Ett monster UTAN stjarna ar ett prefix, precis som forut: `Saved/` tar
+# allt darunder. Med stjarna matchas hela den relativa sokvagen.
 define ignored(rel: text, pats: [text]) -> truth:
     edit hit = false
     loop p in pats:
-        if starts_with(rel, p) or rel is trim_end_slash(p):
+        if index_of(p, "*") >= 0:
+            if glob_match(p, rel):
+                hit = true
+        else if starts_with(rel, p) or rel is trim_end_slash(p):
             hit = true
     hit
 
