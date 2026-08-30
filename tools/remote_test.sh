@@ -18,7 +18,7 @@ check(){ if [ "$2" = "$3" ]; then ok "$1"; else bad "$1 (fick '$2', ville '$3')"
 has()  { if echo "$2" | grep -q "$3"; then ok "$1"; else bad "$1 (fick '$2')"; fi; }
 sha()  { python -c "import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())" "$1"; }
 
-( cd srv && "$RUNE" serve $PORT >/dev/null 2>&1 ) &
+( cd srv && exec "$RUNE" serve $PORT >/dev/null 2>&1 ) &
 SRV=$!
 trap 'kill $SRV 2>/dev/null || true' EXIT
 for i in $(seq 1 20); do curl -s -m 1 "$URL/ref" >/dev/null 2>&1 && break; done

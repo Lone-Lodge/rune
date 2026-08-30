@@ -17,7 +17,7 @@
 use encoding
 use file
 use os
-use region
+use arena
 use text
 
 # --- chunkparametrar ----------------------------------------------------
