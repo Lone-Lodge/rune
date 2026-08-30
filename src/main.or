@@ -42,18 +42,13 @@ define cmd_init() uses files, console:
 define cmd_add(what: text) uses files, console, env, net:
     me = author_name()
     fardsk = sync_locks(root())
-    edit n = 0
-    edit blocked = 0
     targets = if what is "." then walk(root()) else [what]
-    loop rel in targets:
-        if is_empty(add(root(), rel, me)):
-            print_line("  last av {lock_owner(root(), rel)}: {rel}")
-            blocked = blocked + 1
-        else:
-            n = n + 1
-    print_line("koade {n} fil(er)")
-    if blocked > 0:
-        print_line("{blocked} hoppades over - las slapps med `rune unlock`")
+    blocked = add(root(), targets, me)
+    loop rel in blocked:
+        print_line("  last av {lock_owner(root(), rel)}: {rel}")
+    print_line("koade {length(targets) - length(blocked)} fil(er)")
+    if length(blocked) > 0:
+        print_line("{length(blocked)} hoppades over - las slapps med `rune unlock`")
 
 define cmd_lock(path: text) uses files, console, clock, env, net:
     held = lock_here(root(), path, author_name())

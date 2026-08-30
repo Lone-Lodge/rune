@@ -6,6 +6,7 @@ description = "rune - innehallsadresserad lagring med content-defined chunking, 
 [orbs]
 rune = "path:orbs/rune"
 encoding = "*"
+file = "*"
 os = "*"
 text = "*"
 rune_remote = "path:orbs/rune_remote"

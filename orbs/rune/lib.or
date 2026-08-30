@@ -15,6 +15,7 @@
 # laggas till senare som en ren lagringstransform utan att ett enda id andras.
 
 use encoding
+use file
 use os
 use text
 
@@ -131,13 +132,24 @@ define file_blob_id(path: text) -> text uses files:
         start = stop
     sha256(blob_body(ids))
 
-# Innehallet bakom ett blob-id: chunkarna, i receptets ordning.
-define blob_bytes(rune_dir: text, blob_id: text) -> text uses files:
-    edit body = ""
+# Chunk-id:n ur ett recept, i ordning.
+define blob_chunks(rune_dir: text, blob_id: text) -> [text] uses files:
+    edit ids = []
     loop id in split(get_object(rune_dir, "blobs", blob_id), "\n"):
         if not is_empty(id):
-            body = body + get_object(rune_dir, "chunks", id)
-    body
+            ids = append(ids, id)
+    ids
+
+# Innehallet bakom ett blob-id: chunkarna, i receptets ordning.
+#
+# `join` och inte `body = body + chunk`: det senare kopierar allt som redan
+# byggts en gang per chunk, alltsa kvadratiskt i filstorlek. Matt pa en
+# 32 MB-fil: 2,5 sekunder, och en 200 MB .uasset hade tagit minuter.
+define blob_bytes(rune_dir: text, blob_id: text) -> text uses files:
+    edit parts = []
+    loop id in blob_chunks(rune_dir, blob_id):
+        parts = append(parts, get_object(rune_dir, "chunks", id))
+    join(parts, "")
 
 # Har vi varje chunk receptet behover? En chunk ar aldrig tom, sa ett
 # saknat objekt gar att skilja fran ett tomt. Utan den har fragan skriver
@@ -157,7 +169,14 @@ define get_file(rune_dir: text, blob_id: text, out_path: text) -> truth uses fil
     if not blob_complete(rune_dir, blob_id):
         return false
     mkdir_all(path_parent(out_path))
-    write_file(out_path, blob_bytes(rune_dir, blob_id))
+    h = open_write(out_path)
+    if not ok(h):
+        return false
+    defer close(h)
+    # Chunk for chunk ut. Byggs hela filen i minnet forst ar det storsta
+    # FILEN som satter taket i stallet for storsta chunken.
+    loop id in blob_chunks(rune_dir, blob_id):
+        wrote = write_chunk(h, get_object(rune_dir, "chunks", id))
     true
 
 # --- repo ---------------------------------------------------------------
@@ -270,25 +289,45 @@ define write_lines(path: text, lines: [text]) uses files:
 public define entry_path(line: text) -> text = split(line, tab())[0]
 public define entry_blob(line: text) -> text = split(line, tab())[1]
 
-# Satt (eller ersatt) en sokvags rad, och halt listan sorterad pa sokvag.
-define put_entry(lines: [text], path: text, blob: text) -> [text]:
-    edit out = []
+# En radfil som TABELL, och tillbaka. Samma skal som stat_karta har: en
+# linjar sokning per fil ar n kvadrat over tradet, och index, manifest och
+# lasfil har alla sokvagen forst.
+define karta_av(lines: [text]) -> table of text:
+    edit m: table of text = {}
     loop l in lines:
-        if entry_path(l) is not path:
-            out = append(out, l)
-    out = append(out, path + tab() + blob)
+        m[entry_path(l)] = entry_blob(l)
+    m
+
+# Sorterad pa sokvag. Samma trad MASTE ge samma manifest-id.
+define rader_av(m: table of text) -> [text]:
+    edit out = []
+    loop path, blob in m:
+        out = append(out, path + tab() + blob)
     sorted(out, order_of{less: (a, b): a < b})
 
-# Koa EN fil: lagra innehallet, skriv sokvag -> blob-id i indexet.
-# "" nar nagon ANNAN haller last pa sokvagen - se las-avsnittet nedan.
-public define add(root: text, rel: text, owner: text) -> text uses files:
-    held = lock_owner(root, rel)
-    if not is_empty(held) and held is not owner:
-        return ""
-    blob = put_file(rune_dir(root), root + "/" + rel)
-    idx = put_entry(read_lines(rune_dir(root) + "/index"), rel, blob)
-    write_lines(rune_dir(root) + "/index", idx)
-    blob
+# Vardet i en tabell, "" nar nyckeln saknas.
+define vid(m: table of text, key: text) -> text:
+    if has(m, key) then m[key] else ""
+
+# Koa filer: lagra innehallet, skriv sokvag -> blob-id i indexet.
+# Returnerar de sokvagar nagon ANNAN haller - de kom inte in i kon.
+#
+# EN vanda for hela listan, inte en per fil. Indexet och lasfilen lases,
+# sorteras och skrivs en gang. Per fil blev det n kvadrat i bade sortering
+# och disk-IO: 1600 filer tog 34 sekunder for det som ar en vandring.
+public define add(root: text, rels: [text], owner: text) -> [text] uses files:
+    rd = rune_dir(root)
+    edit idx = karta_av(read_lines(rd + "/index"))
+    hallare = karta_av(read_locks(root))
+    edit blocked = []
+    loop rel in rels:
+        held = vid(hallare, rel)
+        if not is_empty(held) and held is not owner:
+            blocked = append(blocked, rel)
+        else:
+            idx[rel] = put_file(rd, root + "/" + rel)
+    write_lines(rd + "/index", rader_av(idx))
+    blocked
 
 # --- refs och commits ---------------------------------------------------
 public define head_ref(root: text) -> text uses files:
@@ -505,22 +544,23 @@ define stat_traff(m: table of text, rel: text, nyckel: text) -> text:
 # inte alls. EN definition av vad status betyder, delad av CLI och yta -
 # annars sager de tva olika saker om samma trad.
 public define status(root: text) -> [text] uses files:
-    idx = read_lines(rune_dir(root) + "/index")
+    idx = karta_av(read_lines(rune_dir(root) + "/index"))
     head = head_commit(root)
     snapshot = if is_empty(head) then [] else commit_manifest(root, head)
+    snap = karta_av(snapshot)
     cache = stat_karta(root)
     edit fardsk = []
     edit rows = []
-    edit seen = []
+    edit seen: table of text = {}
     loop rel in walk(root):
         nyckel = stat_nyckel(root, rel)
         edit cur = stat_traff(cache, rel, nyckel)
         if is_empty(cur):
             cur = file_blob_id(root + "/" + rel)
         fardsk = append(fardsk, rel + tab() + nyckel + tab() + cur)
-        seen = append(seen, rel)
-        staged = lookup(idx, rel)
-        committed = lookup(snapshot, rel)
+        seen[rel] = ""
+        staged = vid(idx, rel)
+        committed = vid(snap, rel)
         if staged is cur:
             rows = append(rows, "koat" + tab() + rel)
         else if is_empty(committed):
@@ -529,7 +569,7 @@ public define status(root: text) -> [text] uses files:
             rows = append(rows, "andrat" + tab() + rel)
     loop line in snapshot:
         p = entry_path(line)
-        if not has_text(seen, p):
+        if not has(seen, p):
             rows = append(rows, "borttaget" + tab() + p)
     write_lines(stat_path(root), fardsk)
     rows

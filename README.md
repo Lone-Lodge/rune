@@ -143,9 +143,24 @@ exakt samma storlek tror cachen att den ar oforandrad. Det ar samma
 kapplopning git har. Den syns nasta gang mtime rors, och `rune add <fil>`
 gar alltid forbi cachen.
 
+## Kostnad per fil
+
+`add` gar EN vanda over listan: index och lasfil lases, sorteras och skrivs
+en gang, inte en gang per fil. `status` slar upp i tabell i stallet for att
+soka linjart. Bada ar linjara i antal filer nu; forut var de kvadratiska och
+3200 filer tog slut pa minnet innan de blev klara.
+
+    3200 filer      add 43 s     status kall 1,2 s   varm 0,8 s
+
+Det som ar kvar i `add` ar disken: tva nya objekt per fil, och en ny fil pa
+Windows kostar nagra millisekunder. Kor `add` en gang till pa samma trad och
+den tar 0,4 s - da finns objekten redan. Vill man ha ner forsta vandan ar
+svaret farre och storre filer i lagret, alltsa packning, och det ar en
+formatandring.
+
 ## Granser
 
-Filer lases hela i minnet, sa nagra hundra MB per fil.
-Manifestet sorteras med en urvalssortering. Inga grenar, ingen
-autentisering pa servern - den litar pa alla som kan na porten, sa den hor
-hemma bakom brandvagg eller VPN tills det finns.
+Filer lases hela i minnet nar de LAGRAS, sa nagra hundra MB per fil.
+Aterskapningen gor det inte langre: `checkout` skriver chunk for chunk.
+Inga grenar, ingen autentisering pa servern - den litar pa alla som kan na
+porten, sa den hor hemma bakom brandvagg eller VPN tills det finns.
