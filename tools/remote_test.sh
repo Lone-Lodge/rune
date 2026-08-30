@@ -17,6 +17,12 @@ bad()  { echo "  FAIL  $1"; fail=1; }
 check(){ if [ "$2" = "$3" ]; then ok "$1"; else bad "$1 (fick '$2', ville '$3')"; fi; }
 has()  { if echo "$2" | grep -q "$3"; then ok "$1"; else bad "$1 (fick '$2')"; fi; }
 sha()  { python -c "import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())" "$1"; }
+skrivbart(){ python -c "import sys
+try:
+    open(sys.argv[1],'ab').close(); print('ja')
+except PermissionError:
+    print('nej')" "$1"; }
+skydd(){ python -c "import os,stat,sys;m=os.stat(sys.argv[1]).st_mode;print('skrivbar' if m & stat.S_IWRITE else 'skyddad')" "$1"; }
 
 HEMLIS="delad-hemlighet-123"
 ( cd srv && "$RUNE" init >/dev/null && "$RUNE" secret "$HEMLIS" >/dev/null )
@@ -113,15 +119,23 @@ cd "$T/b"
 echo "== las over remoten =="
 # b ar en ANNAN person. Utan det testar man bara att man far ta om sitt
 # eget las, vilket man ska fa.
+cd "$T/b"; printf 'b ror den
+' >> stor.bin   # medan den ar fri
 cd "$T/a"; "$RUNE" lock stor.bin >/dev/null
 has "b ser a:s las" "$(cd "$T/b" && "$RUNE" locks)" "stor.bin"
 cd "$T/b"
 has "b kan inte ta den" "$(USERNAME=kollega "$RUNE" lock stor.bin)" "redan last"
 has "b kan inte slappa den" "$(USERNAME=kollega "$RUNE" unlock stor.bin)" "inte din"
-printf 'b ror den
-' >> stor.bin
 has "b:s add hoppar over den lasta" "$(USERNAME=kollega "$RUNE" add .)" "last av"
+# Sparret i add kommer forst nar jobbet redan ar gjort. Skyddet pa disk
+# sager ifran i programmet man faktiskt ritar i, innan man borjar.
+check "b:s kopia ar skrivskyddad" "$(skydd stor.bin)" "skyddad"
+check "och gar faktiskt inte att skriva" "$(skrivbart stor.bin)" "nej"
+check "b:s egen fil ar orord" "$(skydd text.md)" "skrivbar"
 cd "$T/a"; has "a kan slappa sin egen" "$("$RUNE" unlock stor.bin)" "slappt"
+cd "$T/b"; USERNAME=kollega "$RUNE" add . >/dev/null 2>&1 || true
+check "skyddet slapper med laset" "$(skydd stor.bin)" "skrivbar"
+check "och gar att skriva igen" "$(skrivbart stor.bin)" "ja"
 
 kill $SRV 2>/dev/null || true
 cd "$ROOT"

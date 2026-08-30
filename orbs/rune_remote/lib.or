@@ -366,7 +366,7 @@ public define skicka(root: text) -> text uses net, files, console:
 
 # Hamta serverns HEAD och allt den hanger pa. Ror INTE arbetstradet -
 # `rune checkout <commit>` ar ett eget, medvetet steg.
-public define pull(root: text) -> text uses net, files, console:
+public define pull(root: text) -> text uses net, files, console, env:
     url = remote_url(root)
     if is_empty(url):
         return "ingen remote satt - `rune remote <url>`"
@@ -425,6 +425,8 @@ public define pull(root: text) -> text uses net, files, console:
     # Och arbetstradet dit. Tradet var rent nar vi borjade, sa allt som
     # skiljer nu ar det vi just hamtade hem.
     n = write_tree(root, deras)
+    # Tradet ar nyss omskrivet, sa skydden ska sattas om.
+    apply_locks(root, author_name(), [])
     if n < 0:
         return "hamtade {hamtade} objekt, men lagret saknar chunkar - arbetstradet ororda"
     "hamtade {hamtade} objekt, skrev {n} fil(er), HEAD ar {deras}"
@@ -448,17 +450,29 @@ define fetch_object(root: text, url: text, rd: text, sort: text, id: text) -> nu
 # ett las som bara finns lokalt kan aldrig saga att nagon ANNAN haller
 # filen, och da ar det ingen sparr, bara en anteckning.
 
-public define lock_here(root: text, path: text, owner: text) -> text uses net, files, clock:
+# Skydden pa disk sitter i bada grenarna, for det ar HAR laset andras.
+# Utan remote skriver vi tabellen sjalva; med en ar servern sanningen och
+# sync_locks hamtar hem den nya tabellen och satter skydden efter den.
+public define lock_here(root: text, path: text, owner: text) -> text uses net, files, clock, env:
     url = remote_url(root)
     if is_empty(url):
-        return lock(root, path, owner)
-    trim(send_to(root, "{url}/lock", path + text_of([10]) + owner))
+        svar = lock(root, path, owner)
+        apply_locks(root, owner, [])
+        return svar
+    svar = trim(send_to(root, "{url}/lock", path + text_of([10]) + owner))
+    n = sync_locks(root)
+    svar
 
-public define unlock_here(root: text, path: text, owner: text) -> text uses net, files:
+public define unlock_here(root: text, path: text, owner: text) -> text uses net, files, env:
+    forra = read_locks(root)
     url = remote_url(root)
     if is_empty(url):
-        return unlock(root, path, owner)
-    trim(send_to(root, "{url}/unlock", path + text_of([10]) + owner))
+        svar = unlock(root, path, owner)
+        apply_locks(root, owner, forra)
+        return svar
+    svar = trim(send_to(root, "{url}/unlock", path + text_of([10]) + owner))
+    n = sync_locks(root)
+    svar
 
 public define locks_here(root: text) -> [text] uses net, files:
     url = remote_url(root)
@@ -475,11 +489,14 @@ public define locks_here(root: text) -> [text] uses net, files:
 # den maste fyllas innan koandet. Cachen kan vara gammal - men servern ar
 # anda den som avgor nar nagon FORSOKER ta ett las, sa det varsta som kan
 # handa ar att man far reda pa det ett steg senare.
-public define sync_locks(root: text) -> number uses net, files:
+public define sync_locks(root: text) -> number uses net, files, env:
     if is_empty(remote_url(root)):
         return 0
+    forra = read_locks(root)
     rader = locks_here(root)
     skrivet = write_file(rune_dir(root) + "/locks", if length(rader) is 0 then "" else join(rader, "\n") + text_of([10]))
+    # Tabellen ar ny, sa skrivskyddet pa disk ska folja med den.
+    apply_locks(root, author_name(), forra)
     length(rader)
 
 # Ett steg istallet for fyra. Utan den ar "hamta hem repot" init, remote,
@@ -488,7 +505,7 @@ public define sync_locks(root: text) -> number uses net, files:
 #
 # Vagrar mot en mapp som redan har ett repo: att blanda tva historier i
 # samma .rune ar inget nagon menar.
-public define clone(root: text, url: text, hemlig: text) -> text uses net, files, console:
+public define clone(root: text, url: text, hemlig: text) -> text uses net, files, console, env:
     if is_repo(root):
         return "har finns redan ett rune-repo"
     if length(walk(root)) > 0:

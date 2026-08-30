@@ -115,9 +115,22 @@ Man tar inte heller nagon annans las ifran dem - `unlock` vagrar.
 
 Sa lange det inte finns nagon remote ar lasen lokala. Formatet ar det som
 ska synkas och sparret det som maste finnas fore en remote, sa det ar den
-ordningen. Nasta steg for laset ar att markera latta filer skrivskyddade pa
-disk, sa Unreal sjalvt visar dem som tagna. Det kraver en ny runtime-extern
-i Orion och ligger darfor utanfor.
+ordningen.
+
+### Skyddet pa disk
+
+En last fil markeras **skrivskyddad i filsystemet** hos alla utom den som
+haller den. Sparret i `add` kommer forst nar jobbet redan ar gjort; det har
+sager ifran i programmet man faktiskt ritar i, innan man borjar. Det
+fungerar oavsett vilket program det ar - Photoshop, Blender, vad som helst
+som sparar en fil.
+
+Skyddet foljer tabellen och satts om varje gang den andras: nar ett las tas
+eller slapps, nar `add` synkar med servern, och efter en `pull` som skrivit
+om tradet. Slapps ett las far filen tillbaka sin skrivratt.
+
+Skrivningarna i rune tar sjalva bort skyddet forst, sa en `pull` eller
+`checkout` kan skriva over en fil som ar skyddad utan att tyst misslyckas.
 
 ## Remote
 

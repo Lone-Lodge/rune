@@ -232,6 +232,10 @@ define get_file(rune_dir: text, blob_id: text, out_path: text) -> truth uses fil
     if not blob_complete(rune_dir, blob_id):
         return false
     mkdir_all(path_parent(out_path))
+    # Skyddet av innan skrivningen: en fil nagon annan haller ar
+    # skrivskyddad pa disk, och da hade open_write nekats. Den som satter
+    # skyddet satter tillbaka det efterat.
+    skydd = set_readonly(out_path, false)
     h = open_write(out_path)
     if not ok(h):
         return false
@@ -554,6 +558,7 @@ public define write_tree(root: text, id: text) -> number uses files:
         ska[entry_path(line)] = entry_blob(line)
     loop rel in walk(root):
         if not has(ska, rel):
+            skydd = set_readonly(root + "/" + rel, false)
             togs = remove_file(root + "/" + rel)
     edit n = 0
     loop line in rader:
@@ -633,6 +638,22 @@ public define unlock(root: text, path: text, owner: text) -> text uses files:
             kept = append(kept, l)
     write_locks(root, kept)
     ""
+
+# Skrivskyddet pa disk foljer lasen: en fil nagon ANNAN haller gar inte att
+# spara over i det program man faktiskt ritar i. Sparret i `add` kommer
+# forst nar jobbet redan ar gjort - det har sager ifran innan man borjar.
+#
+# `forra` ar lastabellen som gallde innan. Sokvagar som fanns dar men inte
+# langre ar lasta far tillbaka sin skrivratt; utan den halvan hade en
+# slappt fil legat kvar skrivskyddad tills nagon gissade varfor.
+public define apply_locks(root: text, me: text, forra: [text]) uses files:
+    nu = karta_av(read_locks(root))
+    loop l in forra:
+        p = entry_path(l)
+        if not has(nu, p):
+            fritt = set_readonly(root + "/" + p, false)
+    loop p, agare in nu:
+        st = set_readonly(root + "/" + p, agare is not me)
 
 # --- fragor som en yta behover ------------------------------------------
 
