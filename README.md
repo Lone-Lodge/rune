@@ -158,19 +158,26 @@ den tar 0,4 s - da finns objekten redan. Vill man ha ner forsta vandan ar
 svaret farre och storre filer i lagret, alltsa packning, och det ar en
 formatandring.
 
-## Minnet, och var taket sitter
+## Minnet
 
-Filer lases inte langre hela. Chunkningen gar genom ett FONSTER: en grans
-beror bara pa bytesen fran chunkens borjan och som mest chunk_max framat,
-sa mer an sa behover aldrig ligga inne. `checkout` skriver chunk for chunk
-rakt ut i filen.
+Filer lases inte hela. Chunkningen gar genom ett FONSTER: en grans beror
+bara pa bytesen fran chunkens borjan och som mest chunk_max framat, sa mer
+an sa behover aldrig ligga inne. `checkout` skriver chunk for chunk rakt ut
+i filen.
 
-Minnet vaxer anda med filstorleken, och det taket sitter i Orion och inte i
-rune: det som en loopvanda allokerar aterlamnas inte. En 256 MB-fil toppar
-pa 4,6 GB. Ett program som BARA laser 256 MB i block och gor en byteslista
-av varje block, utan att spara nagot, toppar pa 1,6 GB - `bytes_of` ger ett
-tal per byte, och inget varv stads undan. Fonstret ar alltsa ratt form men
-ger ingen vinst forran Orion atervinner per varv.
+Fonstret racker inte i sig sjalvt. Orion har ingen skrapsamlare, sa det ett
+varv allokerar ligger kvar tills processen dor, och `bytes_of` ger ett tal
+per byte - atta ganger innehallet. En 256 MB-fil kostade 4,6 GB.
+
+Darfor kor chunkningen i en ARENA (`region`-orben) och lamnar tillbaka
+varvet nar det ar klart. Det som ska leva vidare - chunk-id:na och det som
+blev over av fonstret - kopieras ut med `persisted` FORE svepet. Utan den
+kopian pekar raderna i receptet in i minne som nasta varv skriver over.
+
+    256 MB     4,6 GB  ->  54 MB
+
+Arenan slas pa forst nar filen inte rymdes i ett fonster. En liten fil har
+inget varv att lamna tillbaka och betalar darfor ingenting.
 
 ## Granser
 

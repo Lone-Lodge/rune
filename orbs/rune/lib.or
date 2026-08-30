@@ -17,6 +17,7 @@
 use encoding
 use file
 use os
+use region
 use text
 
 # --- chunkparametrar ----------------------------------------------------
@@ -128,9 +129,12 @@ define chunk_ids(rune_dir: text, path: text, spara: truth) -> [text] uses files:
     if not ok(h):
         return []
     defer close(h)
+    # Fott FORE arenan slas pa, alltsa i malloc. Allt som laggs till i `ids`
+    # laggs till under persist, sa listan bor kvar dar hela vagen.
     edit ids = []
     edit rest = ""
     edit slut = false
+    edit arenan = false
     loop:
         if not slut:
             bit = read_chunk(h, read_block())
@@ -148,13 +152,34 @@ define chunk_ids(rune_dir: text, path: text, spara: truth) -> [text] uses files:
             if cut < 0:
                 break
             del = text_of(bytes_part(win, at, cut))
-            ids = append(ids, if spara then put_object(rune_dir, "chunks", del) else sha256(del))
+            id = if spara then put_object(rune_dir, "chunks", del) else sha256(del)
+            # TVA saker maste over gransen: id:t sjalvt, som foddes i
+            # arenan, och listan det laggs i - en append allokerar en ny
+            # lista och den hade annars ocksa hamnat dar. Utan detta pekar
+            # raderna i receptet in i minne nasta varv skriver over.
+            kvar = persisted(id)
+            was = persist_on()
+            ids = append(ids, kvar)
+            persist_off(was)
             at = cut
         # Det som blev over ar borjan pa nasta chunk och aldrig mer an
-        # chunk_max, sa fonstret vaxer inte med filen.
-        rest = text_of(bytes_part(win, at, n))
+        # chunk_max, sa fonstret vaxer inte med filen. Det ska ocksa over.
+        rest = persisted(text_of(bytes_part(win, at, n)))
+        # Varvet ar slut: fonstret, chunkarna och hashningen var allt som
+        # allokerades och inget av det behovs mer. Utan svepet vaxer minnet
+        # med filens storlek - 256 MB kostade 4,6 GB, nu 54 MB.
+        if arenan:
+            svept = arena_reset()
+        else if not slut:
+            # Filen rymdes inte i ETT fonster. Fran och med nasta varv ar
+            # allt varvet allokerar skrap efterat, och da lonar sig arenan.
+            # En liten fil kommer aldrig hit och betalar alltsa ingenting.
+            arenan = true
+            pa = arena_on()
         if slut and is_empty(rest):
             break
+    if arenan:
+        av = arena_off()
     ids
 
 # Blob-kroppen ar chunk-id, ett per rad. EN regel, delad av den som lagrar
