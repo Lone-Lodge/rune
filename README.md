@@ -402,26 +402,28 @@ Och de tomma objektmapparna tas bort. Tva hex som mapp ger upp till 256 per
 sort, och en tom mapp kostar ett kluster precis som en fil - tusen av dem
 var fyra av de sju megabyte som lag kvar efter forsta packningen.
 
-## Vad `add` kostar, och vad som INTE ar orsaken
+## Vad `add` kostar
 
-`add` av 3200 sma filer tar ~40 s, alltsa 12 ms per fil. Kall `status`
-laser, chunkar och hashar SAMMA filer for 0,7 ms per fil. Skillnaden ar
-maetbart INTE nagot av foljande, och det ar provkort ett i taget:
+`add` av 2000 sma filer tog 27 sekunder mot gits 6,5. Det matte inte rune.
 
-- objektskrivningen: med `put_object` helt tom - den returnerar bara
-  hashen - tar `add` fortfarande 13,7 ms per fil
-- filskapandet: en oppen pack i stallet for tva nya filer per fil tog
-  47 s till 41 s, alltsa knappt nagot
-- `file_exists` pa en sokvag som inte finns: 0,054 ms per anrop, matt
-- `slot_get` av en tabell: gratis, matt pa 6000 poster
-- packregistret: att hoppa over uppslagningen andrar ingenting
-- den oppna skrivarens filhandtag: ingen skillnad
+Samma trad, men lasta EN gang av nagot annat forst:
 
-Kvar star att `put_file` och `file_blob_id` gor samma sak - efter
-stubbningen bokstavligen samma rader - men kostar 12 ms respektive 0,7 ms
-per fil. Skillnaden ligger alltsa inte i det som anropas per fil utan i
-slingan omkring, och den ar inte hittad. Kurvan ar LINJAR, sa det ar en
-konstant per fil och inte nagot som vaxer.
+    2000 filer    git 6,0 s    rune 2,6 s
+    samma, nyss skapade och aldrig lasta:
+                  git 6,5 s    rune 26,9 s
+
+Rune ar alltsa **2,3 ganger snabbare an git**, och de 27 sekunderna var
+Windows Defender som skannar varje nyskapad fil forsta gangen den oppnas.
+git rors knappt av det - `git.exe` ar en kand signerad binar, medan
+`rune_cli.exe` ar en nybyggd osignerad exe, och det ar det varsta fallet
+for realtidsskanning.
+
+Sa syns det inifran: samma chunkning over samma filista tog 2406 ms
+forsta gangen och 125 ms andra gangen, i SAMMA process, med samma kod.
+
+MATT MED ANTIVIRUS I VAGEN AR INTE EN MATNING AV KODEN. Lat nagot lasa
+tradet forst - `cat` eller en `status` - eller undanta arbetsytan i
+Defender, annars mater man skannern.
 
 ## Skrapet
 
