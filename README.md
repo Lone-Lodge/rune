@@ -75,6 +75,7 @@ forsvinner.
     rune unlock <sokvag>        # slapp den
     rune locks                  # vem haller vad
     rune stat <fil>             # visa chunkningen utan att lagra
+    rune fsck                   # las varje objekt och jamfor med dess id
 
 Ett commit-id far forkortas sa langt det ar entydigt, alltsa de tolv
 tecken `rune log` visar. Ar prefixet tvetydigt sager rune det i stallet
@@ -213,9 +214,15 @@ soka linjart. Bada ar linjara i antal filer nu; forut var de kvadratiska och
 
 Det som ar kvar i `add` ar disken: tva nya objekt per fil, och en ny fil pa
 Windows kostar nagra millisekunder. Kor `add` en gang till pa samma trad och
-den tar 0,4 s - da finns objekten redan. Vill man ha ner forsta vandan ar
-svaret farre och storre filer i lagret, alltsa packning, och det ar en
-formatandring.
+den tar 0,4 s - da finns objekten redan.
+
+**Ingen packning, och det ar ett beslut.** Att lagga manga objekt i fa
+filer, som git gor, skulle ta ner de 43 sekunderna. Men kostnaden betalas
+EN gang per nytt innehall: andra vandan over samma trad ar 0,4 s. Priset
+vore en formatandring som ror uppslagning, `has_object`, remoteprotokollet
+och ett behov av gc - alltsa nastan varje del av lagret - for att gora en
+engangskostnad mindre. Det ar fel byte just nu. Om ett trad nagon gang
+tar minuter att koa forsta gangen ar det da fragan ska stallas om.
 
 ## Minnet
 
@@ -228,7 +235,7 @@ Fonstret racker inte i sig sjalvt. Orion har ingen skrapsamlare, sa det ett
 varv allokerar ligger kvar tills processen dor, och `bytes_of` ger ett tal
 per byte - atta ganger innehallet. En 256 MB-fil kostade 4,6 GB.
 
-Darfor kor chunkningen i en ARENA (`region`-orben) och lamnar tillbaka
+Darfor kor chunkningen i en ARENA (`arena`-orben) och lamnar tillbaka
 varvet nar det ar klart. Det som ska leva vidare - chunk-id:na och det som
 blev over av fonstret - kopieras ut med `persisted` FORE svepet. Utan den
 kopian pekar raderna i receptet in i minne som nasta varv skriver over.
@@ -238,7 +245,41 @@ kopian pekar raderna i receptet in i minne som nasta varv skriver over.
 Arenan slas pa forst nar filen inte rymdes i ett fonster. En liten fil har
 inget varv att lamna tillbaka och betalar darfor ingenting.
 
+## Lagrets sundhet
+
+Namnet pa ett objekt ar hashen av dess innehall, sa den jamforelsen ar hela
+sanningen om lagret.
+
+    rune fsck       laser varje objekt och jamfor med dess namn
+
+En skrivning som inte gick igenom **tas bort**. En full disk eller en
+krasch mitt i skrivningen lamnar annars en stympad fil under ett giltigt
+id, och da sager `has_object` for alltid att vi har objektet - vilket ar
+varre an att sakna det. Ett saknat objekt syns, ett fel objekt gor det
+inte. Gick en fil inte att lagra kommer den inte heller in i kon, for en
+kopost som pekar pa ett objekt som inte finns ar en commit som inte gar
+att checka ut.
+
+## Inga grenar, och varfor
+
+Rune har en enda ref och snabbspolar bara. Det ar ett beslut, inte en
+lucka.
+
+En gren ar bara meningsfull om den kan sla ihop sig igen, och det ar
+precis det binarer inte kan. Det ar darfor lasen finns. En gren som aldrig
+kan sla ihop sig ar en fork, och for det racker en till mapp.
+
+Foljden ar att `checkout` inte flyttar HEAD. Den skriver ut en gammal
+ogonblicksbild for att man ska kunna TITTA pa den. Att lata den flytta
+refen bakat hade gjort de nyare commitarna onaabara och nasta push till en
+icke-snabbspolning.
+
 ## Granser
 
-Inga grenar, ingen autentisering pa servern - den litar pa alla som kan na
-porten, sa den hor hemma bakom brandvagg eller VPN tills det finns.
+Ingen kryptering over natet, sa en avlyssnare pa vagen ser bade hemligheten
+och innehallet: bakom brandvagg eller VPN.
+
+Ingen packning, inga grenar - bada uttalade beslut ovan, inte luckor.
+
+`.runeignore` matchar pa prefix och kan inga globbar. `Saved/` fungerar,
+`*.log` gor det inte.

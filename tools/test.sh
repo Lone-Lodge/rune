@@ -122,5 +122,30 @@ check "borttagningen ar ur ogonblicksbilden" "$(man | grep -c 'tva.txt')" "0"
 check "rent efter borttagningen" "$("$RUNE" status | wc -l)" "0"
 cd "$T"
 
+echo "== lagrets sundhet =="
+mkdir -p "$T/sund"; cd "$T/sund"
+"$RUNE" init >/dev/null
+python -c "import os;open('a.bin','wb').write(os.urandom(200000))"
+"$RUNE" add . >/dev/null; "$RUNE" commit "ett" >/dev/null
+check "fsck ser ett sunt lager" "$("$RUNE" fsck | grep -c 'sunt')" "1"
+check "stat laser inte hela filen" "$("$RUNE" stat a.bin | grep -c 'chunkar')" "1"
+# Namnet ar hashen av innehallet, sa en andrad byte gor filen till nagot
+# annat an det objekt den utger sig for att vara.
+F=$(find .rune/chunks -type f | head -1)
+python -c "import sys;p=sys.argv[1];d=bytearray(open(p,'rb').read());d[10]^=0xFF;open(p,'wb').write(d)" "$F"
+check "fsck hittar en andrad chunk" "$("$RUNE" fsck | grep -c 'TRASIGT')" "1"
+
+echo "== en skrivning som inte gar igenom =="
+# .rune/chunks som FIL i stallet for mapp: da misslyckas varje objekt.
+# Forut hamnade blob-id:t i kon anda, och commiten gick inte att checka ut.
+mkdir -p "$T/full"; cd "$T/full"
+"$RUNE" init >/dev/null
+printf 'x
+' > a.txt
+rm -rf .rune/chunks; printf 'inte en mapp' > .rune/chunks
+check "add sager ifran" "$("$RUNE" add . | grep -c 'KUNDE INTE LAGRAS')" "1"
+check "och koar ingenting" "$(cat .rune/index | wc -c)" "0"
+cd "$T"
+
 cd "$ROOT"; rm -rf "$T"
 [ "$fail" = 0 ] && echo "rune: allt gront" || { echo "rune: NAGOT GICK FEL"; exit 1; }

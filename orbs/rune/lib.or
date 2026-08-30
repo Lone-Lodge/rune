@@ -97,13 +97,21 @@ define object_path(rune_dir: text, sort: text, id: text) -> text:
     rest = text_of(bytes_part(bytes_of(id), 2, byte_count(id)))
     rune_dir + "/" + sort + "/" + head + "/" + rest
 
-# Skriv ett objekt om det inte redan finns. Returnerar id:t.
+# Skriv ett objekt om det inte redan finns. Returnerar id:t, eller "" om
+# skrivningen inte gick igenom.
+#
+# Den halvskrivna filen TAS BORT. En full disk eller en krasch mitt i
+# skrivningen lamnar annars en stympad fil under ett giltigt id, och da
+# sager `has_object` for alltid att vi har objektet. Det ar varre an att
+# sakna det: ett saknat objekt syns, ett fel objekt gor det inte.
 public define put_object(rune_dir: text, sort: text, body: text) -> text uses files:
     id = sha256(body)
     path = object_path(rune_dir, sort, id)
     if file_exists(path) is 0:
         mkdir_all(path_parent(path))
-        write_file(path, body)
+        if write_file(path, body) is 0:
+            skrap = remove_file(path)
+            return ""
     id
 
 public define get_object(rune_dir: text, sort: text, id: text) -> text uses files:
@@ -113,6 +121,15 @@ public define has_object(rune_dir: text, sort: text, id: text) -> truth uses fil
     file_exists(object_path(rune_dir, sort, id)) is not 0
 
 # --- filer in och ut ----------------------------------------------------
+# Gar en enda chunk inte att lagra ar hela receptet vardelost, sa "" ut
+# och ingen halvfardig blob in i lagret.
+define chunk_ids_ok(ids: [text]) -> truth:
+    edit ok = true
+    loop id in ids:
+        if is_empty(id):
+            ok = false
+    ok
+
 # En fils chunkar, i ordning, genom ett FONSTER over filen och inte hela
 # filen i minnet. `bytes_of` gor en lista med ett tal per byte, sa en
 # 256 MB-fil kostade 4,6 GB att lagra - atton ganger sin egen storlek.
@@ -189,11 +206,19 @@ define blob_body(ids: [text]) -> text = join(ids, "\n")
 # Lagra en fil: chunka, skriv de chunkar som saknas, skriv receptet.
 # Returnerar blob-id.
 define put_file(rune_dir: text, path: text) -> text uses files:
-    put_object(rune_dir, "blobs", blob_body(chunk_ids(rune_dir, path, true)))
+    ids = chunk_ids(rune_dir, path, true)
+    if not chunk_ids_ok(ids):
+        return ""
+    put_object(rune_dir, "blobs", blob_body(ids))
 
 # Blob-id for en fil UTAN att lagra nagot. Status ska inte skriva objekt.
 define file_blob_id(path: text) -> text uses files:
     sha256(blob_body(chunk_ids("", path, false)))
+
+# Hur manga chunkar en fil blir, utan att lagra nagot och utan att lasa
+# den hel. `rune stat` ar det enda som fragar.
+public define chunk_count(path: text) -> number uses files:
+    length(chunk_ids("", path, false))
 
 # Chunk-id:n ur ett recept, i ordning.
 define blob_chunks(rune_dir: text, blob_id: text) -> [text] uses files:
@@ -394,19 +419,27 @@ define borttagen() -> text = "-"
 # Vad en koning gjorde. Bada halvorna behovs pa bada stallena - CLI:t
 # skriver "koade N" och doten svarar med samma tva tal - och att lata dem
 # rakna om antalet sjalva hade betytt en vandring till over tradet.
-public type Koat: antal: number, last: [text]
+public type Koat: antal: number, last: [text], fel: [text]
 
 define stage(root: text, rels: [text], borta: [text], owner: text) -> Koat uses files:
     rd = rune_dir(root)
     edit idx = karta_av(read_lines(rd + "/index"))
     hallare = karta_av(read_locks(root))
     edit blocked = []
+    edit fel = []
     loop rel in rels:
         held = vid(hallare, rel)
         if not is_empty(held) and held is not owner:
             blocked = append(blocked, rel)
         else:
-            idx[rel] = put_file(rd, root + "/" + rel)
+            blob = put_file(rd, root + "/" + rel)
+            # Kom den inte i lagret ska den inte in i kon heller. En kopost
+            # som pekar pa ett objekt som inte finns ar en commit som inte
+            # gar att checka ut.
+            if is_empty(blob):
+                fel = append(fel, rel)
+            else:
+                idx[rel] = blob
     loop p in borta:
         who = vid(hallare, p)
         if not is_empty(who) and who is not owner:
@@ -414,7 +447,7 @@ define stage(root: text, rels: [text], borta: [text], owner: text) -> Koat uses 
         else:
             idx[p] = borttagen()
     write_lines(rd + "/index", rader_av(idx))
-    Koat{antal: length(rels) + length(borta) - length(blocked), last: blocked}
+    Koat{antal: length(rels) + length(borta) - length(blocked) - length(fel), last: blocked, fel: fel}
 
 # Koa namngivna sokvagar.
 public define add(root: text, rels: [text], owner: text) -> Koat uses files:
@@ -654,6 +687,30 @@ public define apply_locks(root: text, me: text, forra: [text]) uses files:
             fritt = set_readonly(root + "/" + p, false)
     loop p, agare in nu:
         st = set_readonly(root + "/" + p, agare is not me)
+
+# --- lagrets sundhet ----------------------------------------------------
+# Varje objekts INNEHALL mot dess NAMN. Namnet ar hashen av innehallet, sa
+# den jamforelsen ar hela sanningen: stammer den inte ar filen inte det
+# objektet, oavsett hur den blev sa.
+#
+# Rader "sort<TAB>id" for dem som inte stammer. Tomt betyder sunt lager.
+#
+# `put_object` ska gora det har omojligt for nya objekt - den tar bort en
+# skrivning som inte gick igenom. Det har ar for det som redan hant, och
+# for diskar som tappar bytes langt efter att de skrevs.
+public define fsck(root: text) -> [text] uses files:
+    rd = rune_dir(root)
+    edit trasiga = []
+    loop sort in ["chunks", "blobs", "manifests", "commits"]:
+        mapp = rd + "/" + sort
+        if is_dir(mapp) is not 0:
+            loop d in list_dirs(mapp):
+                if not is_empty(d):
+                    loop f in list_dir(mapp + "/" + d):
+                        if not is_empty(f):
+                            if sha256(read_file(mapp + "/" + d + "/" + f)) is not d + f:
+                                trasiga = append(trasiga, sort + tab() + d + f)
+    trasiga
 
 # --- fragor som en yta behover ------------------------------------------
 

@@ -45,9 +45,13 @@ define cmd_add(what: text) uses files, console, env, net:
     k = if what is "." then add_tree(root(), me) else add(root(), [what], me)
     loop rel in k.last:
         print_line("  last av {lock_owner(root(), rel)}: {rel}")
+    loop rel in k.fel:
+        print_line("  KUNDE INTE LAGRAS: {rel}")
     print_line("koade {k.antal} fil(er)")
     if length(k.last) > 0:
         print_line("{length(k.last)} hoppades over - las slapps med `rune unlock`")
+    if length(k.fel) > 0:
+        print_line("{length(k.fel)} kom inte i lagret - full disk? inget av dem ar koat")
 
 define cmd_lock(path: text) uses files, console, clock, env, net:
     held = lock_here(root(), path, author_name())
@@ -131,10 +135,18 @@ define cmd_secret(varde: text) uses files, console:
         print_line("hemligheten satt")
 
 define cmd_stat(path: text) uses files, console:
-    b = bytes_of(read_file(path))
-    cuts = chunk_offsets(b)
-    n = bytes_count(b)
-    print_line("{path}: {n} bytes, {length(cuts)} chunkar")
+    print_line("{path}: {size_of(path)} bytes, {chunk_count(path)} chunkar")
+
+define cmd_fsck() uses files, console:
+    edit n = 0
+    loop rad in fsck(root()):
+        f = split(rad, text_of([9]))
+        print_line("  TRASIGT  {f[0]}/{f[1]}")
+        n = n + 1
+    if n is 0:
+        print_line("lagret ar sunt")
+    else:
+        print_line("{n} objekt stammer inte med sitt id - hamta dem igen med `rune pull`")
 
 define main() -> number uses files, console, clock, env, net:
     args = arguments()
@@ -195,6 +207,9 @@ define main() -> number uses files, console, clock, env, net:
             print_line(pull(root()))
     else if cmd is "serve":
         serve(root(), if length(args) > 2 then int_from_text(args[2]) else 7420)
+    else if cmd is "fsck":
+        if need_repo():
+            cmd_fsck()
     else if cmd is "stat":
         cmd_stat(args[2])
     else:
