@@ -134,6 +134,31 @@ check "det som inte matchar ar kvar" "$("$RUNE" status | grep -c 'sub/b.txt')" "
 check "tre filer kvar: .runeignore, a.txt och sub/b.txt" "$("$RUNE" status | wc -l)" "3"
 cd "$T"
 
+echo "== skrapet =="
+# Ett add som aldrig blev en commit lamnar sina chunkar kvar. Man sparar,
+# koar, sparar igen - och ingenting stadade det forut.
+mkdir -p "$T/gc"; cd "$T/gc"
+"$RUNE" init >/dev/null
+for i in 1 2 3; do python -c "import os;open('a.bin','wb').write(os.urandom(500000))"; "$RUNE" add . >/dev/null; done
+"$RUNE" commit ett >/dev/null
+objekt(){ find .rune/chunks .rune/blobs .rune/commits .rune/manifests -type f 2>/dev/null | wc -l; }
+FORE=$(objekt)
+"$RUNE" gc >/dev/null
+EFTER=$(objekt)
+check "gc tog bort nagot" "$([ "$EFTER" -lt "$FORE" ] && echo ja || echo nej)" "ja"
+check "och lagret ar sunt efterat" "$("$RUNE" fsck | grep -c 'sunt')" "1"
+H=$(cat .rune/refs/heads/main)
+rm a.bin; "$RUNE" checkout "$H" >/dev/null
+check "commiten gar fortfarande att checka ut" "$(python -c "import os;print(os.path.getsize('a.bin'))")" "500000"
+# Det KOADE far inte stadas bort under fotterna pa den som koade det.
+python -c "import os;open('b.bin','wb').write(os.urandom(100000))"
+"$RUNE" add b.bin >/dev/null
+"$RUNE" gc >/dev/null
+"$RUNE" commit tva >/dev/null
+check "koat overlever en gc" "$("$RUNE" status | wc -l)" "0"
+check "och lagret ar sunt" "$("$RUNE" fsck | grep -c 'sunt')" "1"
+cd "$T"
+
 echo "== lagrets sundhet =="
 mkdir -p "$T/sund"; cd "$T/sund"
 "$RUNE" init >/dev/null

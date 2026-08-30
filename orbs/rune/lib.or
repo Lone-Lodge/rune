@@ -848,6 +848,55 @@ public define file_parts(root: text, id: text, rel: text, from: number, to: numb
         at = slut
     bitar
 
+# --- skrapet -------------------------------------------------------------
+# Ett `add` som aldrig blev en commit lamnar sina chunkar kvar, och det ar
+# inte sallan: man sparar, koar, sparar igen, koar igen. Matt pa tre add
+# och en commit: 28 objekt i lagret dar 7 behovdes.
+#
+# Ingenting stader det, sa lagret vaxer med varje angrad tanke. Det ar
+# darfor gc finns - inte for att gora nagot mindre, utan for att det som
+# ingen kan na inte ska ligga kvar for alltid.
+
+define mark_blob(rd: text, blob: text, set: table of text) -> table of text uses files:
+    edit m = set
+    m["blobs/" + blob] = ""
+    loop cid in blob_chunks(rd, blob):
+        m["chunks/" + cid] = ""
+    m
+
+# Allt som gar att na. Kedjan bakat fran HEAD, och KON: det som ar koat men
+# inte committat far inte stadas bort under fotterna pa den som koade det.
+public define reachable(root: text) -> table of text uses files:
+    rd = rune_dir(root)
+    edit set: table of text = {}
+    loop id in log(root):
+        set["commits/" + id] = ""
+        man = commit_field(get_object(rd, "commits", id), "manifest")
+        if not is_empty(man):
+            set["manifests/" + man] = ""
+            loop rad in commit_manifest(root, id):
+                set = mark_blob(rd, entry_blob(rad), set)
+    loop l in read_lines(rd + "/index"):
+        if entry_blob(l) is not borttagen():
+            set = mark_blob(rd, entry_blob(l), set)
+    set
+
+# Ta bort det ingen nar. Antal borttagna objekt.
+public define gc(root: text) -> number uses files:
+    rd = rune_dir(root)
+    lever = reachable(root)
+    edit n = 0
+    loop sort in ["chunks", "blobs", "manifests", "commits"]:
+        mapp = rd + "/" + sort
+        if is_dir(mapp) is not 0:
+            loop d in list_dirs(mapp):
+                if not is_empty(d):
+                    loop f in list_dir(mapp + "/" + d):
+                        if not is_empty(f) and not has(lever, sort + "/" + d + f):
+                            togs = remove_file(mapp + "/" + d + "/" + f)
+                            n = n + 1
+    n
+
 # --- lagrets sundhet ----------------------------------------------------
 # Varje objekts INNEHALL mot dess NAMN. Namnet ar hashen av innehallet, sa
 # den jamforelsen ar hela sanningen: stammer den inte ar filen inte det

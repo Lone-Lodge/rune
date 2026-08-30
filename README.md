@@ -76,6 +76,7 @@ forsvinner.
     rune locks                  # vem haller vad
     rune stat <fil>             # visa chunkningen utan att lagra
     rune fsck                   # las varje objekt och jamfor med dess id
+    rune gc                     # ta bort det ingen commit nar
 
 Ett commit-id far forkortas sa langt det ar entydigt, alltsa de tolv
 tecken `rune log` visar. Ar prefixet tvetydigt sager rune det i stallet
@@ -350,6 +351,19 @@ kopian pekar raderna i receptet in i minne som nasta varv skriver over.
 
 Arenan slas pa forst nar filen inte rymdes i ett fonster. En liten fil har
 inget varv att lamna tillbaka och betalar darfor ingenting.
+
+## Skrapet
+
+Ett `add` som aldrig blev en commit lamnar sina chunkar kvar. Det ar inte
+sallan: man sparar, koar, sparar igen, koar igen. Matt pa tre add och en
+commit: **28 objekt i lagret dar 7 behovdes.**
+
+    rune gc     tar bort det ingen commit nar
+
+Natbart ar kedjan bakat fran HEAD, OCH kon: det som ar koat men inte
+committat far inte stadas bort under fotterna pa den som koade det.
+
+    36 objekt, 1564 KB  ->  14 objekt, 536 KB
 
 ## Lagrets sundhet
 

@@ -137,6 +137,13 @@ define cmd_secret(varde: text) uses files, console:
 define cmd_stat(path: text) uses files, console:
     print_line("{path}: {size_of(path)} bytes, {chunk_count(path)} chunkar")
 
+define cmd_gc() uses files, console:
+    n = gc(root())
+    if n is 0:
+        print_line("inget skrap")
+    else:
+        print_line("tog bort {n} objekt som ingen commit nar")
+
 define cmd_fsck() uses files, console:
     edit n = 0
     loop rad in fsck(root()):
@@ -207,6 +214,9 @@ define main() -> number uses files, console, clock, env, net:
             print_line(pull(root()))
     else if cmd is "serve":
         serve(root(), if length(args) > 2 then int_from_text(args[2]) else 7420)
+    else if cmd is "gc":
+        if need_repo():
+            cmd_gc()
     else if cmd is "fsck":
         if need_repo():
             cmd_fsck()
