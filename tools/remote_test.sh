@@ -116,6 +116,23 @@ check "init la .rune/ i .gitignore" "$(grep -c '^.rune/$' .gitignore)" "1"
 check "andra init dubblerar inte raden" "$(grep -c '^.rune/$' .gitignore)" "1"
 cd "$T/b"
 
+echo "== lasa ur lagret utan att kanna det =="
+# Servern har ALDRIG skrivit ut nagon fil till sin egen arbetsyta. Att den
+# anda kan svara med innehall ar hela poangen: den laser ur objekten.
+AUTH="Authorization: Bearer $HEMLIS"
+cd "$T/a"
+check "tree listar sokvagarna" "$(curl -s -H "$AUTH" "$URL/tree" | grep -c 'stor.bin')" "1"
+curl -s -H "$AUTH" "$URL/file?path=stor.bin" -o hel.tmp
+check "file ger hela filen, byte for byte" "$(sha hel.tmp)" "$(sha stor.bin)"
+curl -s -H "$AUTH" "$URL/file?path=stor.bin&from=1500000&to=1500016" -o bit.tmp
+check "ett intervall mitt i en 3 MB-binar" "$(python -c "
+d=open('stor.bin','rb').read()[1500000:1500016]
+g=open('bit.tmp','rb').read()
+print('lika' if d==g else 'skiljer')")" "lika"
+check "okand sokvag ger 404" "$(curl -s -o /dev/null -w '%{http_code}' -H "$AUTH" "$URL/file?path=finns-inte.bin")" "404"
+check "hist ger filens versioner" "$(curl -s -H "$AUTH" "$URL/hist?path=text.md" | wc -l)" "3"
+rm -f hel.tmp bit.tmp
+
 echo "== las over remoten =="
 # b ar en ANNAN person. Utan det testar man bara att man far ta om sitt
 # eget las, vilket man ska fa.

@@ -120,6 +120,12 @@ public define get_object(rune_dir: text, sort: text, id: text) -> text uses file
 public define has_object(rune_dir: text, sort: text, id: text) -> truth uses files:
     file_exists(object_path(rune_dir, sort, id)) is not 0
 
+# Ett objekts storlek utan att lasa det. Objekten ar OKOMPRIMERADE, sa en
+# chunkfils storlek ar chunkens langd. Det ar den egenskapen som gor bade
+# storleksfragan och slumpvis lasning gratis.
+public define object_size(rune_dir: text, sort: text, id: text) -> number uses files:
+    size_of(object_path(rune_dir, sort, id))
+
 # --- filer in och ut ----------------------------------------------------
 # Gar en enda chunk inte att lagra ar hela receptet vardelost, sa "" ut
 # och ingen halvfardig blob in i lagret.
@@ -687,6 +693,56 @@ public define apply_locks(root: text, me: text, forra: [text]) uses files:
             fritt = set_readonly(root + "/" + p, false)
     loop p, agare in nu:
         st = set_readonly(root + "/" + p, agare is not me)
+
+# --- att lasa ur lagret utifran ------------------------------------------
+# Innehallsadressering ger SLUMPVIS LASNING gratis. Ett recept plus
+# storleken pa varje chunkfil sager var varje chunk borjar, och da behover
+# bara de chunkar som TACKER intervallet oppnas. Ingen seek, ingen
+# genomlasning, och det spelar ingen roll om filen ar 200 MB.
+#
+# Det ar det som gor att rune kan vara ett LAGER under nagon annans
+# program i stallet for ett verktyg bredvid det.
+
+# Fanns sokvagen i den commiten? Billigare an att fraga efter storleken
+# nar man anda inte behover den.
+public define has_path(root: text, id: text, rel: text) -> truth uses files:
+    not is_empty(lookup(commit_manifest(root, id), rel))
+
+# Filens storlek vid en commit, utan att lasa den.
+public define file_size_at(root: text, id: text, rel: text) -> number uses files:
+    rd = rune_dir(root)
+    blob = lookup(commit_manifest(root, id), rel)
+    if is_empty(blob):
+        return 0 - 1
+    edit n = 0
+    loop cid in blob_chunks(rd, blob):
+        n = n + object_size(rd, "chunks", cid)
+    n
+
+# Bytes [from, to) ur filen vid en commit. "" om sokvagen inte fanns da.
+# `to` bortom filens slut ar inget fel - da kommer det som finns.
+public define file_range(root: text, id: text, rel: text, from: number, to: number) -> text uses files:
+    rd = rune_dir(root)
+    blob = lookup(commit_manifest(root, id), rel)
+    if is_empty(blob) or to <= from:
+        return ""
+    edit bitar = []
+    edit at = 0
+    loop cid in blob_chunks(rd, blob):
+        if at >= to:
+            break
+        # Storleken kommer ur filsystemet, inte ur innehallet. Att hitta
+        # offset for chunk k kostar alltsa k STORLEKSFRAGOR och noll
+        # lasningar - kostnaden foljer receptet, inte filens bytes.
+        langd = object_size(rd, "chunks", cid)
+        slut = at + langd
+        if slut > from:
+            b = bytes_of(get_object(rd, "chunks", cid))
+            forst = if from > at then from - at else 0
+            sist = if to < slut then to - at else langd
+            bitar = append(bitar, text_of(bytes_part(b, forst, sist)))
+        at = slut
+    join(bitar, "")
 
 # --- lagrets sundhet ----------------------------------------------------
 # Varje objekts INNEHALL mot dess NAMN. Namnet ar hashen av innehallet, sa

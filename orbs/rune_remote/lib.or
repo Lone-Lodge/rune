@@ -156,10 +156,64 @@ define safe_id(id: text) -> truth:
             ok = false
     ok
 
-define handle(root: text, head: text, body: text) -> text uses files, clock:
+# Ett svar bar sin KOD, inte bara sin kropp. Utan koden gar "filen fanns
+# inte" inte att skilja fran "filen ar tom", och det ar precis den
+# skillnaden en lasare utifran behover.
+type Svar: kod: number, kropp: text
+
+define ok_svar(kropp: text) -> Svar = Svar{kod: 200, kropp: kropp}
+
+# %20 och slaktingar. En sokvag ur en fragestrang kan bara vad som helst.
+define pct(head: text) -> number:
+    edit v = 0
+    loop i in 0 until 2:
+        c = byte_at(bytes_of(head), i)
+        d = if c >= 48 and c <= 57 then c - 48 else (if c >= 97 and c <= 102 then c - 87 else (if c >= 65 and c <= 70 then c - 55 else 0 - 1))
+        if d < 0:
+            return 0 - 1
+        v = v * 16 + d
+    v
+
+define url_decode(t: text) -> text:
+    b = bytes_of(t)
+    n = bytes_count(b)
+    edit ut = []
+    edit i = 0
+    loop:
+        if i >= n:
+            break
+        c = byte_at(b, i)
+        if c is 37 and i + 2 < n:
+            v = pct(text_of(bytes_part(b, i + 1, i + 3)))
+            if v < 0:
+                ut = append(ut, c)
+                i = i + 1
+            else:
+                ut = append(ut, v)
+                i = i + 3
+        else:
+            ut = append(ut, if c is 43 then 32 else c)
+            i = i + 1
+    text_of(ut)
+
+# `at` far vara ett forkortat commit-id, eller utelamnas for HEAD.
+define at_commit(root: text, at: text) -> text uses files:
+    if is_empty(at) then head_commit(root) else resolve(root, at)
+
+# Radsvar SLUTAR med radbrytning. Objektkroppar gor det inte - de ligger
+# under en hash och en byte till hade andrat varje id - men det har ar ett
+# svar till nagon annans program, och en avslutad sista rad ar vad varje
+# radlasare forvantar sig.
+define rader_svar(rader: [text]) -> text:
+    if length(rader) is 0 then "" else join(rader, "\n") + text_of([10])
+
+define tal(t: text, standard: number) -> number:
+    if is_empty(t) then standard else int_from_text(t)
+
+define handle(root: text, head: text, body: text) -> Svar uses files, clock:
     rl = request_line(head)
     if length(rl) < 2:
-        return ""
+        return ok_svar("")
     method = rl[0]
     path = rl[1]
     seg = segments(path)
@@ -168,17 +222,17 @@ define handle(root: text, head: text, body: text) -> text uses files, clock:
     if method is "POST" and length(seg) is 1 and seg[0] is "have":
         sort = query_arg(path, "sort")
         if not known_sort(sort):
-            return ""
+            return ok_svar("")
         edit saknas = []
         loop id in split(body, "\n"):
             t = trim(id)
             if safe_id(t) and not has_object(rd, sort, t):
                 saknas = append(saknas, t)
-        return join(saknas, "\n")
+        return ok_svar(join(saknas, "\n"))
 
     if length(seg) is 3 and seg[0] is "obj" and known_sort(seg[1]) and safe_id(seg[2]):
         if method is "GET":
-            return if has_object(rd, seg[1], seg[2]) then get_object(rd, seg[1], seg[2]) else ""
+            return ok_svar(if has_object(rd, seg[1], seg[2]) then get_object(rd, seg[1], seg[2]) else "")
         # POST och inte PUT: http-orben talar POST, och en verbsflora vore
         # ett andra satt att gora samma sak.
         if method is "POST":
@@ -186,13 +240,13 @@ define handle(root: text, head: text, body: text) -> text uses files, clock:
             # under ett id som inte ar dess hash - da vore lagret inte langre
             # innehallsadresserat, bara en mapp med namn.
             if sha256(body) is not seg[2]:
-                return "fel id"
+                return ok_svar("fel id")
             skrivet = put_object(rd, seg[1], body)
-            return "ok"
+            return ok_svar("ok")
 
     if length(seg) is 1 and seg[0] is "ref":
         if method is "GET":
-            return head_commit(root)
+            return ok_svar(head_commit(root))
         if method is "POST":
             rader = split(body, "\n")
             gammal = if length(rader) > 0 then trim(rader[0]) else ""
@@ -201,24 +255,61 @@ define handle(root: text, head: text, body: text) -> text uses files, clock:
             # Jamfor-och-satt: tva som pushar samtidigt far inte skriva over
             # varandra tyst. Den som ar sen far veta det och far hamta forst.
             if nu is not gammal:
-                return "stale {nu}"
+                return ok_svar("stale {nu}")
             if not safe_id(ny):
-                return "fel id"
+                return ok_svar("fel id")
             skrivet = write_file(rd + "/" + head_ref(root), ny)
-            return "ok"
+            return ok_svar("ok")
+
+    # --- lasa ur lagret utan att kanna det ------------------------------
+    # De har tre finns for att NAGON ANNAN ska kunna lasa ur repot. Med
+    # bara /obj maste en lasare kanna hela objektmodellen: commit ->
+    # manifest -> blob -> chunkar. Med de har racker en sokvag.
+    #
+    # En sokvag utifran kan inte klattra ur repot, for den slas upp i ett
+    # MANIFEST. Finns den inte dar finns den inte, oavsett hur den stavas.
+
+    if method is "GET" and length(seg) is 1 and seg[0] is "tree":
+        c = at_commit(root, query_arg(path, "at"))
+        if is_empty(c):
+            return Svar{kod: 404, kropp: "ingen sadan commit"}
+        return ok_svar(rader_svar(commit_manifest(root, c)))
+
+    if method is "GET" and length(seg) is 1 and seg[0] is "hist":
+        return ok_svar(rader_svar(file_history(root, url_decode(query_arg(path, "path")))))
+
+    if method is "GET" and length(seg) is 1 and seg[0] is "file":
+        rel = url_decode(query_arg(path, "path"))
+        c = at_commit(root, query_arg(path, "at"))
+        if is_empty(c):
+            return Svar{kod: 404, kropp: "ingen sadan commit"}
+        till_arg = query_arg(path, "to")
+        # `to` utelamnat betyder "resten", och DA maste storleken tas fram
+        # - vilket kostar en storleksfraga per chunk. Ar den given behovs
+        # den inte, och en lasare mitt i en stor fil betalar bara for
+        # chunkarna FORE sig.
+        if is_empty(till_arg):
+            n = file_size_at(root, c, rel)
+            if n < 0:
+                return Svar{kod: 404, kropp: "fanns inte i den commiten"}
+            return ok_svar(file_range(root, c, rel, tal(query_arg(path, "from"), 0), n))
+        if not has_path(root, c, rel):
+            return Svar{kod: 404, kropp: "fanns inte i den commiten"}
+        return ok_svar(file_range(root, c, rel, tal(query_arg(path, "from"), 0), int_from_text(till_arg)))
 
     if method is "GET" and length(seg) is 1 and seg[0] is "locks":
-        return join(read_locks(root), "\n")
+        return ok_svar(join(read_locks(root), "\n"))
 
     if method is "POST" and length(seg) is 1 and (seg[0] is "lock" or seg[0] is "unlock"):
         rader = split(body, "\n")
         if length(rader) < 2:
-            return "saknar vag och agare"
+            return ok_svar("saknar vag och agare")
         vag = trim(rader[0])
         vem = trim(rader[1])
-        return if seg[0] is "lock" then lock(root, vag, vem) else unlock(root, vag, vem)
+        return ok_svar(if seg[0] is "lock" then lock(root, vag, vem) else unlock(root, vag, vem))
 
-    ""
+    Svar{kod: 404, kropp: ""}
+
 
 # Servera tills processen stoppas. Ett svar per uppkoppling: pushar och
 # pulls ar fa och stora, inte manga och sma, sa keep-alive vore komplexitet
@@ -242,7 +333,8 @@ public define serve(root: text, port: number) uses net, files, clock, console:
             hb = read_request(conn)
             if not is_empty(hb[0]):
                 if secret_ok(root, bearer(hb[0])):
-                    answer(conn, handle(root, hb[0], hb[1]))
+                    sv = handle(root, hb[0], hb[1])
+                    answer_code(conn, sv.kod, if sv.kod is 200 then "OK" else "Not Found", sv.kropp)
                 else:
                     answer_code(conn, 401, "Unauthorized", "fel eller saknad hemlighet")
             stang = close(conn)

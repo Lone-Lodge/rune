@@ -188,6 +188,41 @@ lokalt kan aldrig saga att nagon ANNAN haller filen, och da ar det ingen
 sparr utan en anteckning. Den lokala lasfilen blir en cache som `add` far
 sin sparr ur.
 
+## Lasa ur lagret utan att kanna det
+
+Med bara `/obj/<sort>/<id>` maste en lasare kanna hela objektmodellen -
+commit, manifest, blob, chunkar - for att komma at en enda fil. Tre
+endpoints till racker for att nagon annans program ska slippa det:
+
+    GET /tree?at=<commit>                    sokvag<TAB>blob, en per rad
+    GET /hist?path=<sokvag>                  filens versioner, nyast forst
+    GET /file?path=<sokvag>&at=&from=&to=    bytes
+
+`at` far vara ett forkortat commit-id, eller utelamnas for HEAD. `from`
+och `to` utelamnade betyder hela filen. En sokvag som inte fanns i den
+commiten ger 404, sa "fanns inte" gar att skilja fran "ar tom".
+
+**Innehallsadressering ger slumpvis lasning gratis.** Objekten ar
+okomprimerade, sa en chunkfils STORLEK ar chunkens langd. Ett recept plus
+en storleksfraga per chunk sager alltsa var varje chunk borjar, och da
+oppnas bara de chunkar som tacker intervallet. Ingen seek, ingen
+genomlasning.
+
+Matt pa en 100 MB-binar over HTTP (klientens curl-uppstart ar ~140 ms av
+varje rad):
+
+    16 bytes ur borjan     151 ms
+    16 bytes ur mitten     276 ms
+    16 bytes ur slutet     347 ms
+    hela filen            1825 ms
+
+Kostnaden foljer alltsa hur langt in i RECEPTET man laser, inte hur stor
+filen ar, och det som vaxer ar storleksfragor - inte lasningar.
+
+Servern har aldrig skrivit ut nagon fil till sin egen arbetsyta. Den
+svarar ur objekten, och det ar det som gor rune till ett lager under
+nagon annans program i stallet for ett verktyg bredvid det.
+
 ## Statcachen
 
 `status` hashade om hela arbetstradet varje gang. Nu minns `.rune/stat`
