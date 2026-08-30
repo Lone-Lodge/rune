@@ -98,5 +98,29 @@ check "kan inte slappa annans las" "$("$RUNE" unlock annans.txt | grep -c 'inte 
 check "eget las gar att slappa" "$("$RUNE" unlock last.txt | grep -c 'slappt')" "1"
 check "det andra laset star kvar" "$("$RUNE" locks | grep -c 'kollega')" "1"
 
+echo "== ogonblicksbilden ar HELA tradet =="
+# En partiell add fick manifestet att bli BARA det koade: allt man inte
+# koade forsvann ur historien, och en clone hade fatt ett trad utan dem.
+mkdir -p "$T/bild"; cd "$T/bild"
+"$RUNE" init >/dev/null
+printf 'ett
+' > en.txt; printf 'tva
+' > tva.txt
+"$RUNE" add . >/dev/null; "$RUNE" commit "bada" >/dev/null
+printf 'ett igen
+' > en.txt
+"$RUNE" add en.txt >/dev/null; "$RUNE" commit "bara en" >/dev/null
+man() { C=$(cat .rune/refs/heads/main); M=$(grep '^manifest' ".rune/commits/${C:0:2}/${C:2}" | cut -d' ' -f2); cat ".rune/manifests/${M:0:2}/${M:2}"; }
+check "partiell add behaller resten" "$(man | grep -c 'tva.txt')" "1"
+check "och tradet ar rent efterat" "$("$RUNE" status | wc -l)" "0"
+rm tva.txt
+check "borttagen fil syns" "$("$RUNE" status | grep -c 'borttaget')" "1"
+"$RUNE" add . >/dev/null
+check "add . koar borttagningen" "$("$RUNE" status | grep -c 'koat.*tva.txt')" "1"
+"$RUNE" commit "bort" >/dev/null
+check "borttagningen ar ur ogonblicksbilden" "$(man | grep -c 'tva.txt')" "0"
+check "rent efter borttagningen" "$("$RUNE" status | wc -l)" "0"
+cd "$T"
+
 cd "$ROOT"; rm -rf "$T"
 [ "$fail" = 0 ] && echo "rune: allt gront" || { echo "rune: NAGOT GICK FEL"; exit 1; }

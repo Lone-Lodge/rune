@@ -378,13 +378,21 @@ define rader_av(m: table of text) -> [text]:
 define vid(m: table of text, key: text) -> text:
     if has(m, key) then m[key] else ""
 
-# Koa filer: lagra innehallet, skriv sokvag -> blob-id i indexet.
-# Returnerar de sokvagar nagon ANNAN haller - de kom inte in i kon.
-#
-# EN vanda for hela listan, inte en per fil. Indexet och lasfilen lases,
-# sorteras och skrivs en gang. Per fil blev det n kvadrat i bade sortering
-# och disk-IO: 1600 filer tog 34 sekunder for det som ar en vandring.
-public define add(root: text, rels: [text], owner: text) -> [text] uses files:
+# En BORTTAGNING i kon. Kon ar "det som andrats sedan sist", sa tystnad om
+# en fil betyder oror - darfor maste ett borttagande sagas rakt ut. "-" ar
+# samma tecken som en commit utan foralder anvander.
+define borttagen() -> text = "-"
+
+# Skriv kon: `rels` far sitt innehall lagrat, `borta` far en markering.
+# Indexet och lasfilen lases, sorteras och skrivs EN gang. Per fil blev det
+# n kvadrat i bade sortering och disk-IO: 1600 filer tog 34 sekunder for
+# det som ar en vandring. Returnerar de sokvagar nagon ANNAN haller.
+# Vad en koning gjorde. Bada halvorna behovs pa bada stallena - CLI:t
+# skriver "koade N" och doten svarar med samma tva tal - och att lata dem
+# rakna om antalet sjalva hade betytt en vandring till over tradet.
+public type Koat: antal: number, last: [text]
+
+define stage(root: text, rels: [text], borta: [text], owner: text) -> Koat uses files:
     rd = rune_dir(root)
     edit idx = karta_av(read_lines(rd + "/index"))
     hallare = karta_av(read_locks(root))
@@ -395,8 +403,34 @@ public define add(root: text, rels: [text], owner: text) -> [text] uses files:
             blocked = append(blocked, rel)
         else:
             idx[rel] = put_file(rd, root + "/" + rel)
+    loop p in borta:
+        who = vid(hallare, p)
+        if not is_empty(who) and who is not owner:
+            blocked = append(blocked, p)
+        else:
+            idx[p] = borttagen()
     write_lines(rd + "/index", rader_av(idx))
-    blocked
+    Koat{antal: length(rels) + length(borta) - length(blocked), last: blocked}
+
+# Koa namngivna sokvagar.
+public define add(root: text, rels: [text], owner: text) -> Koat uses files:
+    stage(root, rels, [], owner)
+
+# Koa hela tradet: allt som finns, och en markering for det som fanns i
+# HEAD men inte langre pa disken. Den ar den enda som kan se en
+# borttagning, for den ar den enda som vet vad som INTE finns.
+public define add_tree(root: text, owner: text) -> Koat uses files:
+    finns = walk(root)
+    edit pa_disk: table of text = {}
+    loop rel in finns:
+        pa_disk[rel] = ""
+    head = head_commit(root)
+    edit borta = []
+    loop line in (if is_empty(head) then [] else commit_manifest(root, head)):
+        pp = entry_path(line)
+        if not has(pa_disk, pp):
+            borta = append(borta, pp)
+    stage(root, finns, borta, owner)
 
 # --- refs och commits ---------------------------------------------------
 public define head_ref(root: text) -> text uses files:
@@ -411,7 +445,17 @@ public define commit(root: text, msg: text, author: text) -> text uses files, cl
     idx = read_lines(rd + "/index")
     if length(idx) is 0:
         return ""
-    manifest = put_object(rd, "manifests", join(idx, "\n"))
+    # Ogonblicksbilden ar HEAD PLUS kon, inte kon i sig. Kon ar det som
+    # andrats sedan sist och toms efter varje commit; togs den for hela
+    # bilden forsvann allt man INTE koade ur historien: `rune add en.fil`
+    # och commit gav en commit som bara innehall den enda filen.
+    edit bild = karta_av(commit_manifest(root, head_commit(root)))
+    loop l in idx:
+        if entry_blob(l) is borttagen():
+            bild = map_remove(bild, entry_path(l))
+        else:
+            bild[entry_path(l)] = entry_blob(l)
+    manifest = put_object(rd, "manifests", join(rader_av(bild), "\n"))
     parent = head_commit(root)
     par = if is_empty(parent) then "-" else parent
     nl = text_of([10])
@@ -639,7 +683,7 @@ public define status(root: text) -> [text] uses files:
     loop line in snapshot:
         p = entry_path(line)
         if not has(seen, p):
-            rows = append(rows, "borttaget" + tab() + p)
+            rows = append(rows, (if vid(idx, p) is borttagen() then "koat" else "borttaget") + tab() + p)
     write_lines(stat_path(root), fardsk)
     rows
 

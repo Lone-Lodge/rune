@@ -31,6 +31,19 @@ commit     foralder, manifest-id, forfattare, tid, meddelande.
 Allt bor pa `.rune/<sort>/ab/cdef...`, tva hex som mapp sa en katalog aldrig
 far hundratusen poster.
 
+## Kon och ogonblicksbilden
+
+Kon (`.rune/index`) ar **det som andrats sedan sist**, och den toms efter
+varje commit. Ogonblicksbilden ar HEAD plus kon, inte kon i sig. Darfor
+kan man koa en enda fil och committa utan att resten av tradet forsvinner
+ur historien - vilket ar precis vad som hande innan, och en clone hade da
+fatt ett trad utan dem.
+
+En BORTTAGNING maste darfor sagas rakt ut, for tystnad om en fil betyder
+oror. `rune add .` ser det: allt som fanns i HEAD men inte langre pa
+disken koas som borttaget, markt med "-" i kon. `rune add <fil>` gor det
+inte, den ror bara den sokvag du namner.
+
 ## Komprimering
 
 Ingen. Medvetet. Chunk-id ar hashen av det **okomprimerade** innehallet,
