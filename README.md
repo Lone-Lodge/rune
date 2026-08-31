@@ -448,11 +448,26 @@ skillnaden mot ingen alls.
     packat         1078 KB
     git efter gc    819 KB
 
-Pa slumpdata ar vi jamsides med git. Pa text ar git 1,3 gangar battre.
-Det som ar kvar av skillnaden ar att zlib har separata trad for literaler
-och for langder, och att git DELTAKOMPRIMERAR liknande objekt mot
-varandra - var chunkning gor det arendet for stora binarer men inte for
-sma textfiler.
+Pa slumpdata ar vi jamsides med git. Pa text ar git 1,3 gangar battre, och
+den skillnaden BLIR KVAR. Det ar ett beslut, matt fram:
+
+Varje objekt komprimeras for sig, utan delat fonster med sina grannar. Det
+ligger nara till hands att tro att SOLIDA block - manga objekt i en strom -
+ar den stora vinsten. Matt pa 2,4 MB riktig kallkod:
+
+    per objekt   1046 KB
+    solid         986 KB      alltsa sex procent
+
+Sex procent, mot att varje intervallasning skulle behova packa upp ett helt
+block for att na en chunk. Det ar fel byte, och intervallasningen ar en av
+de fa saker rune gor som ingen annan gor.
+
+Det som DA ar kvar av gapet mot git ar tva saker som bada ar egna projekt:
+separata Huffman-trad for literaler och for langder, och deltakomprimering
+mellan liknande objekt. Var chunkning gor det andra arendet for stora
+binarer, men en liten textfil ar en enda chunk och har inget att deltas
+mot. Priset ar ungefar 170 KB pa 2,4 MB. Det ar inte samma sorts vinst som
+packningen var, och det star har i stallet for att sta pa en lista.
 
 En trasig strom far inte krascha avkodaren. Det ar just pa trasiga bytes
 `fsck` kors, sa den maste sta emot dem: ett avstand bakom stromens borjan
