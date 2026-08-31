@@ -748,6 +748,67 @@ public define add_tree(root: text, owner: text) -> Koat uses files:
     stage(root, finns, borta, owner)
 
 # --- refs och commits ---------------------------------------------------
+# --- grenar --------------------------------------------------------------
+# Plumbningen var redan grenformad: HEAD bar en SOKVAG till en ref, inte ett
+# commit-id, och refarna bor i refs/heads. Det som saknades var orden.
+#
+# En gren ar en fil med ett commit-id i. Att byta gren ar att skriva om HEAD
+# och sedan gora arbetstradet lika med den refens commit - inget mer.
+define heads_dir(root: text) -> text = rune_dir(root) + "/refs/heads"
+
+public define branches(root: text) -> [text] uses files:
+    edit ut = []
+    loop f in list_dir(heads_dir(root)):
+        if not is_empty(f):
+            ut = append(ut, f)
+    sorted(ut, order_of{less: (a: text, b: text): a < b})
+
+# Namnet ur HEAD, alltsa sista biten av "refs/heads/<namn>".
+public define current_branch(root: text) -> text uses files:
+    r = head_ref(root)
+    edit sist = ""
+    loop d in split(r, "/"):
+        if not is_empty(d):
+            sist = d
+    sist
+
+# Ett grennamn far inte innehalla snedstreck eller punkter: refen ar en
+# FILNAMN, och en sokvag som klattrar ur refs/heads ar inte ett grennamn.
+public define valid_branch(namn: text) -> truth:
+    if is_empty(namn):
+        return false
+    index_of(namn, "/") < 0 and index_of(namn, "\\") < 0 and index_of(namn, "..") < 0
+
+# Ny gren HAR, alltsa pa samma commit som du star pa. false om namnet ar
+# taget eller odugligt.
+public define make_branch(root: text, namn: text) -> truth uses files:
+    if not valid_branch(namn) or file_exists(heads_dir(root) + "/" + namn) is not 0:
+        return false
+    mkdir_all(heads_dir(root))
+    write_file(heads_dir(root) + "/" + namn, head_commit(root))
+    true
+
+# Byt gren. "" nar det gick, annars skalet.
+#
+# Kraver ett RENT trad. Att byta gren skriver om arbetstradet, och det som
+# bara finns hos dig skulle forsvinna utan att nagon sagt det.
+public define switch_branch(root: text, namn: text) -> text uses files:
+    if not valid_branch(namn):
+        return "odugligt grennamn: {namn}"
+    if file_exists(heads_dir(root) + "/" + namn) is 0:
+        return "ingen gren som heter {namn}"
+    if namn is current_branch(root):
+        return "du star redan pa {namn}"
+    if length(status(root)) > 0:
+        return "du har andringar som inte ar committade - `rune status` visar dem"
+    write_file(rune_dir(root) + "/HEAD", "refs/heads/" + namn)
+    dit = head_commit(root)
+    if is_empty(dit):
+        return ""
+    if write_tree(root, dit) < 0:
+        return "lagret saknar chunkar for {namn}"
+    ""
+
 public define head_ref(root: text) -> text uses files:
     read_file(rune_dir(root) + "/HEAD")
 
@@ -779,12 +840,18 @@ public define commit(root: text, msg: text, author: text) -> text uses files, cl
 # ror kon - servern har ingen att ro ur.
 
 define write_commit(root: text, bild: table of text, author: text, msg: text) -> text uses files, clock:
+    write_commit_med(root, bild, author, msg, "")
+
+# Samma, men med en ANDRAFORALDER pa en egen rad, sa forsta raden och alla
+# som laser den ar oforandrade.
+define write_commit_med(root: text, bild: table of text, author: text, msg: text, andra: text) -> text uses files, clock:
     rd = rune_dir(root)
     manifest = put_object(rd, "manifests", join(rader_av(bild), "\n"))
     parent = head_commit(root)
     par = if is_empty(parent) then "-" else parent
     nl = text_of([10])
-    body = "parent {par}" + nl + "manifest {manifest}" + nl + "author {author}" + nl + "time {now_unix()}" + nl + nl + msg
+    andrarad = if is_empty(andra) then "" else "merge {andra}" + nl
+    body = "parent {par}" + nl + andrarad + "manifest {manifest}" + nl + "author {author}" + nl + "time {now_unix()}" + nl + nl + msg
     id = put_object(rd, "commits", body)
     if is_empty(manifest) or is_empty(id):
         return ""
@@ -1073,6 +1140,119 @@ public define file_parts(root: text, id: text, rel: text, from: number, to: numb
         at = slut
     bitar
 
+# --- att sla ihop --------------------------------------------------------
+# En commit har EN foralder, utom en sammanslagning som har tva. Den andra
+# star pa en EGEN rad, `merge <id>`, sa forsta raden och alla som laser den
+# ar oforandrade - `log` foljer forstaforaldern som forut.
+#
+# MEN: allt som bara nas via den andra foraldern maste raknas som natbart,
+# annars stadar `pack` bort halva sammanslagningen.
+public define parents_of(root: text, id: text) -> [text] uses files:
+    body = get_object(rune_dir(root), "commits", id)
+    edit ut = []
+    p = commit_field(body, "parent")
+    if not is_empty(p) and p is not "-":
+        ut = append(ut, p)
+    m = commit_field(body, "merge")
+    if not is_empty(m) and m is not "-":
+        ut = append(ut, m)
+    ut
+
+# Allt bakat fran `id`, bada foraldrarna.
+public define ancestors(root: text, id: text) -> table of text uses files:
+    edit sedda: table of text = {}
+    edit ko = [id]
+    loop:
+        if length(ko) is 0:
+            break
+        nu = ko[length(ko) - 1]
+        ko = bytes_part(ko, 0, length(ko) - 1)
+        if not has(sedda, nu) and not is_empty(nu):
+            sedda[nu] = ""
+            loop f in parents_of(root, nu):
+                ko = append(ko, f)
+    sedda
+
+# Narmaste gemensamma forfader: forsta traffen bakat fran `b` bland allt som
+# ar nabart fran `a`. I en historia med flera sammanslagningar ar det inte
+# alltid den BASTA basen. Det ar en forenkling, och den star har.
+public define merge_base(root: text, a: text, b: text) -> text uses files:
+    fran_a = ancestors(root, a)
+    edit sedda: table of text = {}
+    edit ko = [b]
+    loop:
+        if length(ko) is 0:
+            break
+        nu = ko[length(ko) - 1]
+        ko = bytes_part(ko, 0, length(ko) - 1)
+        if has(fran_a, nu):
+            return nu
+        if not has(sedda, nu) and not is_empty(nu):
+            sedda[nu] = ""
+            loop f in parents_of(root, nu):
+                ko = append(ko, f)
+    ""
+
+# Vad en sammanslagning blev: id pa den nya commiten, eller de sokvagar som
+# krockade, eller ett skal till att den inte gick att gora alls.
+public type Ihop: id: text, krockar: [text], skal: text
+
+# Trevags per SOKVAG, inte per rad. En binar gar inte att sla ihop rad for
+# rad, och for text ar filnivan det arliga forsta steget: den sager VILKA
+# filer som krockar och ror ingenting.
+public define merge(root: text, namn: text, author: text) -> Ihop uses files, clock:
+    if file_exists(heads_dir(root) + "/" + namn) is 0:
+        return Ihop{id: "", krockar: [], skal: "ingen gren som heter {namn}"}
+    if length(status(root)) > 0:
+        return Ihop{id: "", krockar: [], skal: "du har andringar som inte ar committade"}
+    mitt = head_commit(root)
+    deras = trim(read_file(heads_dir(root) + "/" + namn))
+    if is_empty(deras):
+        return Ihop{id: "", krockar: [], skal: "{namn} har inga commits"}
+    bas = merge_base(root, mitt, deras)
+    if bas is deras:
+        return Ihop{id: mitt, krockar: [], skal: "redan ihop med {namn}"}
+    if bas is mitt:
+        # Snabbspolning: vi har inget eget, sa refen flyttar och inget mer.
+        write_file(rune_dir(root) + "/" + head_ref(root), deras)
+        n = write_tree(root, deras)
+        return Ihop{id: deras, krockar: [], skal: if n < 0 then "lagret saknar chunkar" else ""}
+    b_map = karta_av(if is_empty(bas) then [] else commit_manifest(root, bas))
+    o_map = karta_av(commit_manifest(root, mitt))
+    t_map = karta_av(commit_manifest(root, deras))
+    edit alla: table of text = {}
+    loop k, v in o_map:
+        alla[k] = ""
+    loop k, v in t_map:
+        alla[k] = ""
+    loop k, v in b_map:
+        alla[k] = ""
+    edit bild: table of text = {}
+    edit krockar = []
+    loop vag, x in alla:
+        o = vid(o_map, vag)
+        t = vid(t_map, vag)
+        bb = vid(b_map, vag)
+        if o is t:
+            if not is_empty(o):
+                bild[vag] = o
+        else if o is bb:
+            # Vi rorde den inte, de gjorde det. Deras vinner - aven en radering.
+            if not is_empty(t):
+                bild[vag] = t
+        else if t is bb:
+            if not is_empty(o):
+                bild[vag] = o
+        else:
+            krockar = append(krockar, vag)
+    if length(krockar) > 0:
+        return Ihop{id: "", krockar: sorted(krockar, order_of{less: (a: text, b: text): a < b}), skal: ""}
+    id = write_commit_med(root, bild, author, "ihop med {namn}", deras)
+    if is_empty(id):
+        return Ihop{id: "", krockar: [], skal: "kunde inte lagras"}
+    n = write_tree(root, id)
+    Ihop{id: id, krockar: [], skal: if n < 0 then "lagret saknar chunkar" else ""}
+
 # --- skrapet -------------------------------------------------------------
 # Ett `add` som aldrig blev en commit lamnar sina chunkar kvar, och det ar
 # inte sallan: man sparar, koar, sparar igen, koar igen. Matt pa tre add
@@ -1094,7 +1274,14 @@ define mark_blob(rd: text, blob: text, set: table of text) -> table of text uses
 public define reachable(root: text) -> table of text uses files:
     rd = rune_dir(root)
     edit set: table of text = {}
-    loop id in log(root):
+    # BADA foraldrarna, och ALLA grenar - inte bara kedjan fran HEAD.
+    # Annars stadar packningen bort halva en sammanslagning, eller hela
+    # en gren man inte star pa.
+    edit fran: table of text = {}
+    loop b in branches(root):
+        loop k, v in ancestors(root, trim(read_file(heads_dir(root) + "/" + b))):
+            fran[k] = ""
+    loop id, v in fran:
         set["commits/" + id] = ""
         man = commit_field(get_object(rd, "commits", id), "manifest")
         if not is_empty(man):

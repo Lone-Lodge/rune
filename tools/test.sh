@@ -136,6 +136,59 @@ check "och aldsta versionen ar den forsta" "$(cat ut.txt)" "ett"
 check "show tar ett forkortat id" "$("$RUNE" show "$A" a.txt ut2.txt | grep -c skrev)" "1"
 cd "$T"
 
+echo "== grenar =="
+mkdir -p "$T/gr"; cd "$T/gr"
+"$RUNE" init >/dev/null
+printf 'bas\n' > a.txt; printf 'orord\n' > c.txt
+"$RUNE" add . >/dev/null; "$RUNE" commit bas >/dev/null
+check "en gren finns fran borjan" "$("$RUNE" branch | grep -c 'main')" "1"
+"$RUNE" branch sido >/dev/null
+check "den nya syns" "$("$RUNE" branch | wc -l)" "2"
+check "stjarnan star pa den man ar pa" "$("$RUNE" branch | grep -c '\* main')" "1"
+"$RUNE" switch sido >/dev/null
+printf 'sido\n' > b.txt
+"$RUNE" add . >/dev/null; "$RUNE" commit s1 >/dev/null
+"$RUNE" switch main >/dev/null
+check "tradet foljer med tillbaka" "$([ -f b.txt ] && echo finns || echo borta)" "borta"
+"$RUNE" switch sido >/dev/null
+check "och dit igen" "$([ -f b.txt ] && echo finns || echo borta)" "finns"
+"$RUNE" switch main >/dev/null
+printf 'main\n' > d.txt
+"$RUNE" add . >/dev/null; "$RUNE" commit m1 >/dev/null
+
+echo "== sla ihop =="
+# Trevags per sokvag. Bada sidorna ska med, och det som ingen rort ska sta kvar.
+"$RUNE" merge sido >/dev/null
+check "bada sidornas filer finns" "$([ -f b.txt ] && [ -f d.txt ] && echo ja || echo nej)" "ja"
+check "det ororda star kvar" "$(cat c.txt)" "orord"
+check "tradet ar rent efterat" "$("$RUNE" status | wc -l)" "0"
+check "commiten bar sitt meddelande" "$("$RUNE" log | head -1 | grep -c 'ihop med sido')" "1"
+check "en andra gang sager ifran" "$("$RUNE" merge sido | grep -c 'redan ihop')" "1"
+# Det som bara nas via ANDRAFORALDERN maste overleva en packning.
+"$RUNE" pack >/dev/null
+check "lagret ar sunt efter pack" "$("$RUNE" fsck | grep -c 'sunt')" "1"
+"$RUNE" switch sido >/dev/null
+check "sidogrenen overlevde packningen" "$([ -f b.txt ] && echo ja || echo nej)" "ja"
+"$RUNE" switch main >/dev/null
+cd "$T"
+
+echo "== en krock ror ingenting =="
+mkdir -p "$T/kr"; cd "$T/kr"
+"$RUNE" init >/dev/null
+printf 'bas\n' > a.txt
+"$RUNE" add . >/dev/null; "$RUNE" commit bas >/dev/null
+"$RUNE" branch sido >/dev/null; "$RUNE" switch sido >/dev/null
+printf 'sido andrade\n' > a.txt
+"$RUNE" add . >/dev/null; "$RUNE" commit s1 >/dev/null
+"$RUNE" switch main >/dev/null
+printf 'main andrade\n' > a.txt
+"$RUNE" add . >/dev/null; "$RUNE" commit m1 >/dev/null
+FORE=$(cat .rune/refs/heads/main)
+check "krocken namnger filen" "$("$RUNE" merge sido | grep -c 'a.txt')" "1"
+check "arbetsfilen ar orord" "$(cat a.txt)" "main andrade"
+check "och HEAD star kvar" "$(cat .rune/refs/heads/main)" "$FORE"
+cd "$T"
+
 echo "== diff =="
 mkdir -p "$T/df"; cd "$T/df"
 "$RUNE" init >/dev/null

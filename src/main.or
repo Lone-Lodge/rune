@@ -101,6 +101,34 @@ define cmd_ur(rel: text) uses files, console:
     else:
         print_line("{rel} lag inte i kon")
 
+define cmd_branch(namn: text) uses files, console:
+    if is_empty(namn):
+        nu = current_branch(root())
+        loop b in branches(root()):
+            print_line("  {if b is nu then "*" else " "} {b}")
+    else if make_branch(root(), namn):
+        print_line("grenen {namn} star har - `rune switch {namn}` for att ga dit")
+    else:
+        print_line("gick inte att skapa {namn} - taget eller odugligt namn")
+
+define cmd_switch(namn: text) uses files, console:
+    skal = switch_branch(root(), namn)
+    if is_empty(skal):
+        print_line("pa {namn}")
+    else:
+        print_line(skal)
+
+define cmd_merge(namn: text) uses files, console, env, clock:
+    r = merge(root(), namn, author_name())
+    if length(r.krockar) > 0:
+        print_line("krockar - bada har andrat samma filer, inget ar gjort:")
+        loop v in r.krockar:
+            print_line("  {v}")
+    else if not is_empty(r.skal):
+        print_line(r.skal)
+    else:
+        print_line("ihop med {namn}: {r.id}")
+
 define cmd_status() uses files, console:
     loop row in status(root()):
         f = split(row, text_of([9]))
@@ -199,6 +227,15 @@ define main() -> number uses files, console, clock, env, net:
     else if cmd is "ur":
         if need_repo():
             cmd_ur(args[2])
+    else if cmd is "merge":
+        if need_repo():
+            cmd_merge(args[2])
+    else if cmd is "branch":
+        if need_repo():
+            cmd_branch(if length(args) > 2 then args[2] else "")
+    else if cmd is "switch":
+        if need_repo():
+            cmd_switch(args[2])
     else if cmd is "status":
         if need_repo():
             cmd_status()

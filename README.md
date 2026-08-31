@@ -79,6 +79,9 @@ men aldrig exekverade, och det ar skillnad pa rimligt och bevisat.
     rune init                   # starta ett repo har
     rune add .                  # koa hela tradet
     rune status                 # koat / nytt / andrat / borttaget
+    rune branch [namn]          # lista grenar, eller skapa en har
+    rune switch <namn>          # ga till en gren
+    rune merge <namn>           # sla ihop en gren med den du star pa
     rune ur <sokvag>            # ta en sokvag UR kon
     rune commit "meddelande"
     rune log
@@ -534,26 +537,53 @@ inte. Gick en fil inte att lagra kommer den inte heller in i kon, for en
 kopost som pekar pa ett objekt som inte finns ar en commit som inte gar
 att checka ut.
 
-## Inga grenar, och varfor
+## Grenar
 
-Rune har en enda ref och snabbspolar bara. Det ar ett beslut, inte en
-lucka.
+    rune branch                 vilka som finns, och var du star
+    rune branch <namn>          en ny gren HAR
+    rune switch <namn>          ga dit - tradet foljer med
+    rune merge <namn>           sla ihop den med den du star pa
 
-En gren ar bara meningsfull om den kan sla ihop sig igen, och det ar
-precis det binarer inte kan. Det ar darfor lasen finns. En gren som aldrig
-kan sla ihop sig ar en fork, och for det racker en till mapp.
+Plumbningen var redan grenformad: HEAD bar en SOKVAG till en ref, inte ett
+commit-id, och refarna bor i `refs/heads`. En gren ar en fil med ett
+commit-id i, och att byta gren ar att skriva om HEAD och sedan gora
+arbetstradet lika med den refens commit.
 
-Foljden ar att `checkout` inte flyttar HEAD. Den skriver ut en gammal
-ogonblicksbild for att man ska kunna TITTA pa den. Att lata den flytta
-refen bakat hade gjort de nyare commitarna onaabara och nasta push till en
-icke-snabbspolning.
+`switch` och `merge` kraver ett RENT trad. Bada skriver om arbetstradet,
+och det som bara finns hos dig skulle forsvinna utan att nagon sagt det.
+
+### Trevags per SOKVAG, inte per rad
+
+En binar gar inte att sla ihop rad for rad, och for text ar filnivan det
+arliga forsta steget. Regeln per sokvag:
+
+    bada lika              -> den
+    vi rorde den inte      -> deras, aven en radering
+    de rorde den inte      -> var
+    bada andrade olika     -> KROCK
+
+En krock namnger filerna och ror INGENTING - inte arbetstradet, inte
+refen. Det finns ingen halvt sammanslagen fil att stada upp efterat.
+
+En sammanslagning bar TVA foraldrar. Den andra star pa en egen rad,
+`merge <id>`, sa forsta raden och alla som laser den ar oforandrade och
+`log` foljer forstaforaldern som forut. Men natbarheten foljer BADA, och
+alla grenar - annars stadar `pack` bort halva sammanslagningen.
+
+Det HAR stod tidigare att rune aldrig skulle fa grenar, med skalet att en
+gren bara ar meningsfull om den kan sla ihop sig igen och att binarer inte
+kan det. Det argumentet holl sa lange rune bara var till for assets. For
+text haller det inte, och da var det inte langre ett beslut utan en lucka.
 
 ## Granser
 
 Ingen kryptering over natet, sa en avlyssnare pa vagen ser bade hemligheten
 och innehallet: bakom brandvagg eller VPN.
 
-Ingen packning, inga grenar - bada uttalade beslut ovan, inte luckor.
+Ingen packning - ett uttalat beslut ovan, inte en lucka.
+
+Ingen radvis sammanslagning: en krock loses genom att valja en sida eller
+redigera filen, inte genom markorer i den.
 
 Servern ger ett svar per uppkoppling, sa en push oppnar en per objekt.
 Keep-alive ar den enda kvarvarande posten pa listan.
