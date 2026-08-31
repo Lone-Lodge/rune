@@ -195,6 +195,25 @@ check "texten ur den komprimerade packen" "$(md5 text.txt)" "$S1"
 check "binaren ur samma pack" "$(md5 slump.bin)" "$S2"
 cd "$T"
 
+echo "== packnamn kolliderar inte =="
+# Namnet raknades fram ur ANTALET filer i packmappen. Tva fel: list_dir pa
+# en tom mapp ger [""] och alltsa langden 1, och `(n + 1 as text)` binder
+# som `n + (1 as text)` - en konkatenering. En pack hette "21" i stallet
+# for "3", och forr eller senare hade ett add oppnat en BEFINTLIG pack for
+# skrivning och tomt den.
+mkdir -p "$T/pn"; cd "$T/pn"
+"$RUNE" init >/dev/null
+echo forsta > a.txt
+"$RUNE" add . >/dev/null; "$RUNE" commit ett >/dev/null; "$RUNE" pack >/dev/null
+for i in 2 3 4 5 6; do echo "rad $i" > "f$i.txt"; "$RUNE" add . >/dev/null; "$RUNE" commit "c$i" >/dev/null; done
+"$RUNE" pack >/dev/null
+check "lagret ar sunt efter varv av add och pack" "$("$RUNE" fsck | grep -c 'sunt')" "1"
+H=$(cat .rune/refs/heads/main); rm -f ./*.txt
+"$RUNE" checkout "$H" >/dev/null
+check "alla sex filerna finns kvar" "$(ls ./*.txt | wc -l)" "6"
+check "och den forsta ar orord" "$(cat a.txt)" "forsta"
+cd "$T"
+
 echo "== skrapet =="
 # `pack` skriver om det NABARA, sa skrap forsvinner som en foljd.
 # Ett add som aldrig blev en commit lamnar sina chunkar kvar. Man sparar,

@@ -115,8 +115,7 @@ define writer_pa() -> truth = slot_has("rune:w") and slot_get_number("rune:w:opp
 public define writer_open(root: text) uses files:
     rd = rune_dir(root)
     mkdir_all(pack_dir(rd))
-    n = length(list_dir(pack_dir(rd)))
-    bas = pack_dir(rd) + "/" + ((n + 1) as text)
+    bas = nasta_pack(rd)
     h = open_write(bas + ".pack")
     if not ok(h):
         return
@@ -207,7 +206,25 @@ public define put_object(rune_dir: text, sort: text, body: text) -> text uses fi
 # Id:t ar fortfarande hashen av kroppen, sa en pack ar en LAGRINGSFORM och
 # inte ett nytt format. Samma repo kan ha bade losa objekt och packar, och
 # den som laser behover inte veta vilket det ar.
-public define pack_dir(rune_dir: text) -> text = rune_dir + "/pack"
+public public define pack_dir(rune_dir: text) -> text = rune_dir + "/pack"
+
+# Namnet pa nasta pack: hogsta talet som redan finns, plus ett.
+#
+# Forst raknade jag FILERNA i mappen. Tva fel pa en gang: `list_dir` pa en
+# tom mapp ger [""] och alltsa langden 1, och `(n + 1 as text)` binder som
+# `n + (1 as text)` - alltsa en KONKATENERING. En pack hette "21" i stallet
+# for "3". Bada gav namn som forr eller senare kolliderar, och en kollision
+# hade oppnat en befintlig pack for SKRIVNING och tomt den.
+public define nasta_pack(rune_dir: text) -> text uses files:
+    pd = pack_dir(rune_dir)
+    edit hogst = 0
+    if is_dir(pd) is not 0:
+        loop f in list_dir(pd):
+            if ends_with(f, ".pack"):
+                n = int_from_text(text_of(bytes_part(bytes_of(f), 0, byte_count(f) - 5)))
+                if n > hogst:
+                    hogst = n
+    pd + "/" + ((hogst + 1) as text)
 
 # Registret over ALLA packar. Byggt en gang per process och sparat i en
 # slot: att lasa registerfilerna en gang per objekt hade gjort varje
@@ -1079,7 +1096,7 @@ public define pack(root: text) -> number uses files:
     gamla = if is_dir(pack_dir(rd)) is not 0 then list_dir(pack_dir(rd)) else []
     lossa = losa(rd)
     mkdir_all(pack_dir(rd))
-    ny = pack_dir(rd) + "/" + (length(gamla) + 1 as text)
+    ny = nasta_pack(rd)
     h = open_write(ny + ".pack")
     if not ok(h):
         return 0 - 1
