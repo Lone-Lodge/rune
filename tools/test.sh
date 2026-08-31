@@ -221,6 +221,52 @@ check "show med for fa argument" "$("$RUNE" show abc 2>&1 | head -1)" "bruk: run
 check "branch -d utan namn" "$("$RUNE" branch -d 2>&1 | head -1)" "rune branch -d <namn>"
 cd "$T"
 
+echo "== rad for rad =="
+mkdir -p "$T/rad"; cd "$T/rad"
+"$RUNE" init >/dev/null
+seq 1 8 > a.txt; printf 'AAA\000BBB' > c.bin
+"$RUNE" add . >/dev/null; "$RUNE" commit bas >/dev/null
+"$RUNE" branch sido >/dev/null; "$RUNE" switch sido >/dev/null
+(echo "topp-sido"; seq 1 7) > a.txt
+"$RUNE" add . >/dev/null; "$RUNE" commit s1 >/dev/null
+"$RUNE" switch main >/dev/null
+(seq 1 4; echo "mitt-main"; seq 5 8) > a.txt
+"$RUNE" add . >/dev/null; "$RUNE" commit m1 >/dev/null
+"$RUNE" merge sido >/dev/null
+check "sidans tillagg overst" "$(head -1 a.txt)" "topp-sido"
+check "mains tillagg i mitten" "$(sed -n '6p' a.txt)" "mitt-main"
+check "sidans radering holl" "$(grep -c '^8$' a.txt)" "0"
+check "tradet ar rent efterat" "$("$RUNE" status | wc -l)" "0"
+cd "$T"
+
+echo "== samma rad ar fortfarande en krock =="
+mkdir -p "$T/rad2"; cd "$T/rad2"
+"$RUNE" init >/dev/null
+seq 1 5 > a.txt; printf 'AAA\000BBB' > c.bin
+"$RUNE" add . >/dev/null; "$RUNE" commit bas >/dev/null
+"$RUNE" branch sido >/dev/null; "$RUNE" switch sido >/dev/null
+sed -i '1s/.*/ETT-sido/' a.txt; printf 'AAA\000SIDO' > c.bin
+"$RUNE" add . >/dev/null; "$RUNE" commit s1 >/dev/null
+"$RUNE" switch main >/dev/null
+sed -i '1s/.*/ETT-main/' a.txt; printf 'AAA\000MAIN' > c.bin
+"$RUNE" add . >/dev/null; "$RUNE" commit m1 >/dev/null
+UT="$("$RUNE" merge sido)"
+check "textfilen krockar" "$(echo "$UT" | grep -c 'a.txt')" "1"
+check "binaren krockar alltid" "$(echo "$UT" | grep -c 'c.bin')" "1"
+check "arbetsfilen ar orord" "$(head -1 a.txt)" "ETT-main"
+check "och tradet ar rent" "$("$RUNE" status | wc -l)" "0"
+# Samma andring pa bada sidor ar ingen krock.
+cd "$T"; mkdir -p "$T/rad3"; cd "$T/rad3"
+"$RUNE" init >/dev/null
+seq 1 5 > a.txt; "$RUNE" add . >/dev/null; "$RUNE" commit bas >/dev/null
+"$RUNE" branch sido >/dev/null; "$RUNE" switch sido >/dev/null
+sed -i '3s/.*/LIKA/' a.txt; "$RUNE" add . >/dev/null; "$RUNE" commit s1 >/dev/null
+"$RUNE" switch main >/dev/null
+sed -i '3s/.*/LIKA/' a.txt; "$RUNE" add . >/dev/null; "$RUNE" commit m1 >/dev/null
+check "samma andring pa bada sidor gar ihop" "$("$RUNE" merge sido | grep -c 'ihop med')" "1"
+check "och raden star kvar en gang" "$(grep -c 'LIKA' a.txt)" "1"
+cd "$T"
+
 echo "== diff =="
 mkdir -p "$T/df"; cd "$T/df"
 "$RUNE" init >/dev/null

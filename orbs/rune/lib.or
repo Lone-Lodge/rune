@@ -1216,9 +1216,146 @@ public define merge_base(root: text, a: text, b: text) -> text uses files:
 # krockade, eller ett skal till att den inte gick att gora alls.
 public type Ihop: id: text, krockar: [text], skal: text
 
-# Trevags per SOKVAG, inte per rad. En binar gar inte att sla ihop rad for
-# rad, och for text ar filnivan det arliga forsta steget: den sager VILKA
-# filer som krockar och ror ingenting.
+# --- radvis ---------------------------------------------------------------
+# Filnivan sager VILKA filer som krockar. Radnivan gor att de flesta INTE
+# gor det: tva som rort olika stallen i samma fil har inte krockat.
+#
+# En krock ar fortfarande HELA filen, och den ror ingenting. Rune skriver
+# aldrig markorer i en fil - en halvt sammanslagen fil ar ett tillstand
+# ingen har bett om, och det gar inte att skilja fran riktig text efterat.
+
+# For varje rad i `a`: vilken rad i `b` den svarar mot i den langsta
+# gemensamma foljden, eller -1. Samma LCS-tabell som diff_rows.
+define align(a: [text], b: [text]) -> [number]:
+    n = length(a)
+    m = length(b)
+    edit ut = []
+    loop x in 0 until n:
+        ut = append(ut, -1)
+    if n is 0 or m is 0:
+        return ut
+    bredd = m + 1
+    edit t = []
+    loop x in 0 until (n + 1) * bredd:
+        t = append(t, 0)
+    edit i = n - 1
+    loop:
+        if i < 0:
+            break
+        edit j = m - 1
+        loop:
+            if j < 0:
+                break
+            v = if a[i] is b[j] then t[(i + 1) * bredd + j + 1] + 1 else (if t[(i + 1) * bredd + j] >= t[i * bredd + j + 1] then t[(i + 1) * bredd + j] else t[i * bredd + j + 1])
+            t = set(t, i * bredd + j, v)
+            j = j - 1
+        i = i - 1
+    edit p = 0
+    edit q = 0
+    loop:
+        if p >= n or q >= m:
+            break
+        if a[p] is b[q]:
+            ut = set(ut, p, q)
+            p = p + 1
+            q = q + 1
+        else if t[(p + 1) * bredd + q] >= t[p * bredd + q + 1]:
+            p = p + 1
+        else:
+            q = q + 1
+    ut
+
+define slice(xs: [text], fran: number, till: number) -> [text]:
+    edit ut = []
+    edit i = fran
+    loop:
+        if i >= till:
+            break
+        ut = append(ut, xs[i])
+        i = i + 1
+    ut
+
+define same_rows(a: [text], b: [text]) -> truth:
+    if length(a) is not length(b):
+        return false
+    edit lika = true
+    edit i = 0
+    loop:
+        if i >= length(a) or not lika:
+            break
+        if a[i] is not b[i]:
+            lika = false
+        i = i + 1
+    lika
+
+public type Radihop: rader: [text], krock: truth
+
+# Trevags rad for rad. En rad som BADA nar fran basen ar en fast punkt, och
+# mellan tva fasta punkter ligger ett stycke som bara en sida behover ha
+# rort. Ror bada samma stycke olika ar det en krock, och da ar hela filen
+# det.
+public define merge_rows(bas: [text], var: [text], deras: [text]) -> Radihop:
+    if length(bas) * length(var) > diff_cap() or length(bas) * length(deras) > diff_cap():
+        return Radihop{rader: [], krock: true}
+    ov = align(bas, var)
+    tv = align(bas, deras)
+    edit ut = []
+    edit pb = 0
+    edit po = 0
+    edit pt = 0
+    edit krock = false
+    edit i = 0
+    loop:
+        if i > length(bas) or krock:
+            break
+        fast = i < length(bas) and ov[i] >= 0 and tv[i] >= 0
+        # Sista varvet ar svansen efter den sista fasta punkten.
+        if fast or i is length(bas):
+            kb = slice(bas, pb, i)
+            ko = slice(var, po, if fast then ov[i] else length(var))
+            kt = slice(deras, pt, if fast then tv[i] else length(deras))
+            if same_rows(ko, kt):
+                loop r in ko:
+                    ut = append(ut, r)
+            else if same_rows(ko, kb):
+                loop r in kt:
+                    ut = append(ut, r)
+            else if same_rows(kt, kb):
+                loop r in ko:
+                    ut = append(ut, r)
+            else:
+                krock = true
+            if fast:
+                ut = append(ut, bas[i])
+                pb = i + 1
+                po = ov[i] + 1
+                pt = tv[i] + 1
+        i = i + 1
+    Radihop{rader: ut, krock: krock}
+
+# Blob-id for den sammanslagna filen, eller "" nar den inte gick att sla
+# ihop: binar, nyskapad pa bada sidor, eller en riktig radkrock.
+define merge_file(root: text, bb: text, o: text, t: text) -> text uses files:
+    rd = rune_dir(root)
+    if is_empty(bb) or is_empty(o) or is_empty(t):
+        return ""
+    b_txt = blob_bytes(rd, bb)
+    o_txt = blob_bytes(rd, o)
+    t_txt = blob_bytes(rd, t)
+    if is_binary(b_txt) or is_binary(o_txt) or is_binary(t_txt):
+        return ""
+    r = merge_rows(split(b_txt, "\n"), split(o_txt, "\n"), split(t_txt, "\n"))
+    if r.krock:
+        return ""
+    tmp = rd + "/tmp_merge"
+    if write_file(tmp, join(r.rader, "\n")) is 0:
+        return ""
+    ny = put_file(rd, tmp)
+    skrap = remove_file(tmp)
+    ny
+
+# Trevags per SOKVAG, och for text rad for rad inuti filen. En binar gar
+# inte att sla ihop rad for rad, sa dar ar sokvagen hela svaret.
 public define merge(root: text, namn: text, author: text) -> Ihop uses files, clock:
     if file_exists(heads_dir(root) + "/" + namn) is 0:
         return Ihop{id: "", krockar: [], skal: "ingen gren som heter {namn}"}
@@ -1263,7 +1400,12 @@ public define merge(root: text, namn: text, author: text) -> Ihop uses files, cl
             if not is_empty(o):
                 bild[vag] = o
         else:
-            krockar = append(krockar, vag)
+            # Bada har rort den. Rad for rad om det gar, annars en krock.
+            ny = merge_file(root, bb, o, t)
+            if is_empty(ny):
+                krockar = append(krockar, vag)
+            else:
+                bild[vag] = ny
     if length(krockar) > 0:
         return Ihop{id: "", krockar: sorted(krockar, order_of{less: (a: text, b: text): a < b}), skal: ""}
     id = write_commit_med(root, bild, author, "ihop med {namn}", deras)

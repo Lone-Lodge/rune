@@ -559,18 +559,29 @@ ihopslagen, och `-D` ar hur du sager att du menar det.
 `switch` och `merge` kraver ett RENT trad. Bada skriver om arbetstradet,
 och det som bara finns hos dig skulle forsvinna utan att nagon sagt det.
 
-### Trevags per SOKVAG, inte per rad
+### Trevags per sokvag, och rad for rad inuti
 
-En binar gar inte att sla ihop rad for rad, och for text ar filnivan det
-arliga forsta steget. Regeln per sokvag:
+Forst per SOKVAG:
 
     bada lika              -> den
     vi rorde den inte      -> deras, aven en radering
     de rorde den inte      -> var
     bada andrade olika     -> KROCK
 
+Sista raden ar dar radnivan kommer in. Har bada rort samma fil jamfors
+den rad for rad mot basen: en rad som BADA nar fran basen ar en fast
+punkt, och mellan tva fasta punkter ligger ett stycke som bara en sida
+behover ha rort. Tva som andrat olika stallen i samma fil har alltsa inte
+krockat. Ror bada samma stycke olika ar det en krock - och da ar HELA
+filen det.
+
+En binar jamfors aldrig rad for rad. Dar ar sokvagen hela svaret, och en
+fil som bada rort krockar alltid.
+
 En krock namnger filerna och ror INGENTING - inte arbetstradet, inte
-refen. Det finns ingen halvt sammanslagen fil att stada upp efterat.
+refen. Rune skriver aldrig markorer i en fil: en halvt sammanslagen fil
+ar ett tillstand ingen har bett om, och den gar inte att skilja fran
+riktig text efterat. Du valjer en sida, eller redigerar filen sjalv.
 
 En sammanslagning bar TVA foraldrar. Den andra star pa en egen rad,
 `merge <id>`, sa forsta raden och alla som laser den ar oforandrade och
@@ -589,8 +600,8 @@ och innehallet: bakom brandvagg eller VPN.
 
 Ingen packning - ett uttalat beslut ovan, inte en lucka.
 
-Ingen radvis sammanslagning: en krock loses genom att valja en sida eller
-redigera filen, inte genom markorer i den.
+Ingen sammanslagning INUTI en rad, och inga konfliktmarkorer: en krock
+loses genom att valja en sida eller redigera filen.
 
 Servern ger ett svar per uppkoppling, sa en push oppnar en per objekt.
 Keep-alive ar den enda kvarvarande posten pa listan.
