@@ -66,7 +66,9 @@ rm -f kod.txt
 check "status ser borttaget" "$("$RUNE" status | grep -c 'borttaget')" "1"
 
 echo "== dedup: en andrad byte kostar en chunk =="
-n=$(find .rune/chunks -type f | wc -l)
+# Chunkarna ligger i packen sedan `add` slutade skriva en fil per objekt,
+# sa rakna bada stallena - annars provar testet ett lager som inte finns.
+n=$(( $(find .rune/chunks -type f 2>/dev/null | wc -l) + $(cat .rune/pack/*.idx 2>/dev/null | awk -F'	' '$2=="chunks"' | wc -l) ))
 check "chunkar delas mellan commits" "$([ "$n" -lt 12 ] && echo ja || echo nej)" "ja"
 
 echo "== statcachen =="
