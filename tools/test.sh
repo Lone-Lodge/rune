@@ -248,6 +248,9 @@ import glob
 p=glob.glob('.rune/pack/*.pack')[0]
 d=bytearray(open(p,'rb').read()); d[5000]^=0xFF; open(p,'wb').write(d)"
 check "fsck hittar skada i packen" "$("$RUNE" fsck | grep -c 'TRASIGT')" "1"
+# En trasig strom far inte KRASCHA avkodaren. Det ar just pa trasiga
+# bytes fsck kors, sa den maste overleva dem och saga vad den fann.
+check "och kraschar inte pa vagen" "$("$RUNE" fsck >/dev/null 2>&1; echo $?)" "0"
 cd "$T"
 
 echo "== lagrets sundhet =="

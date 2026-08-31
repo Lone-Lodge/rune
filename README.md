@@ -414,25 +414,39 @@ den som laser behover inte veta vilket det ar.
 
 Varje objekt provas for sig och lagras rakt av nar komprimeringen inte
 vann. En .uasset-chunk VAXER av att komprimeras och ska inte betala for
-det. Kompressorn ar `compress`-orben: LZ77 over ett 64 KB-fonster, inte
-zlib och inte kompatibel med det. Vi skriver och laser vara egna bytes, sa
-det finns inget utbytesformat att folja, och hela DEFLATE ar det mesta av
-koden for den sista tredjedelen av vinsten.
+det. Kompressorn ar `compress`-orben: LZ77 over ett 64 KB-fonster och en
+kanonisk Huffman ovanpa. Inte zlib och inte kompatibel med det - vi
+skriver och laser vara egna bytes, sa det finns inget utbytesformat att
+folja.
+
+LZ77 tar bort upprepningen; literalerna kostar fortfarande en hel byte
+styck, och i text ar de kraftigt snedfordelade. Ett trad over HELA
+utdatan, inte separata for literaler och langder som DEFLATE har - ett
+huvud i stallet for tre, och skillnaden mellan dem ar mindre an
+skillnaden mot ingen alls.
+
+    kallkod   1,75x med bara LZ77  ->  2,15x med Huffman  (zlib: 2,8x)
 
     2000 filer a 2 KB, OKOMPRIMERBAR slumpdata
     losa objekt   12343 KB   (4005 filer)
     packat         4618 KB   (5 filer)
     git efter gc   4419 KB
 
-    117 filer riktig kallkod, 2689 KB
+    118 filer riktig kallkod, 2713 KB
     losa objekt    2824 KB
-    packat         1270 KB
-    git efter gc    811 KB
+    packat         1078 KB
+    git efter gc    819 KB
 
-Pa slumpdata ar vi i praktiken jamsides med git. Pa text ar git 1,6 gangar
-battre, och skillnaden ar entropikodning: zlib Huffman-kodar sina literaler
-medan var kostar en byte styck. Det ar den sista biten, och den ar ocksa
-den dyraste att skriva.
+Pa slumpdata ar vi jamsides med git. Pa text ar git 1,3 gangar battre.
+Det som ar kvar av skillnaden ar att zlib har separata trad for literaler
+och for langder, och att git DELTAKOMPRIMERAR liknande objekt mot
+varandra - var chunkning gor det arendet for stora binarer men inte for
+sma textfiler.
+
+En trasig strom far inte krascha avkodaren. Det ar just pa trasiga bytes
+`fsck` kors, sa den maste sta emot dem: ett avstand bakom stromens borjan
+eller en literalfoljd utanfor den avbryter avkodningen i stallet for att
+lasa ur minnet bredvid.
 
 Packen tar bara det NABARA, sa skrap kommer aldrig in i en - det ar darfor
 det inte behovs nagon gc for packar. Gamla packar och losa objekt tas bort
