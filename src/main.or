@@ -216,7 +216,7 @@ define cmd_fsck() uses files, console:
 define main() -> number uses files, console, clock, env, net:
     args = arguments()
     if length(args) < 2:
-        print_line("rune init | add | status | commit | log | checkout | history | show | lock | unlock | locks | clone | remote | push | pull | serve | stat")
+        print_line("rune init | add | status | commit | log | diff | checkout | history | show | branch | switch | merge | lock | unlock | locks | clone | remote | push | pull | serve | pack | fsck | stat")
         return 1
     cmd = args[1]
     if cmd is "init":
