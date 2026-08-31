@@ -591,6 +591,12 @@ behover ha rort. Tva som andrat olika stallen i samma fil har alltsa inte
 krockat. Ror bada samma stycke olika ar det en krock - och da ar HELA
 filen det.
 
+Att den gor RATT sak star inte pa handskrivna fall. `tools/merge_vs_git.py`
+slumpar en bas och tva sidor, later bade rune och `git merge-file` sla ihop
+dem, och jamfor. 570 fall: samma verdikt varje gang, och for de 409 som
+gick ihop rent samma utdata byte for byte. Skriptet ligger utanfor gaten
+med flit - det behover git, och en korning ar hundratals processer.
+
 En binar jamfors aldrig rad for rad. Dar ar sokvagen hela svaret, och en
 fil som bada rort krockar alltid.
 
