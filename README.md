@@ -82,6 +82,7 @@ men aldrig exekverade, och det ar skillnad pa rimligt och bevisat.
     rune branch [namn]          # lista grenar, eller skapa en har
     rune switch <namn>          # ga till en gren
     rune merge <namn>           # sla ihop en gren med den du star pa
+    rune branch -d|-D <namn>    # ta bort en gren
     rune ur <sokvag>            # ta en sokvag UR kon
     rune commit "meddelande"
     rune log
@@ -543,11 +544,17 @@ att checka ut.
     rune branch <namn>          en ny gren HAR
     rune switch <namn>          ga dit - tradet foljer med
     rune merge <namn>           sla ihop den med den du star pa
+    rune branch -d <namn>       ta bort en ihopslagen gren
+    rune branch -D <namn>       ta bort den anda
 
 Plumbningen var redan grenformad: HEAD bar en SOKVAG till en ref, inte ett
 commit-id, och refarna bor i `refs/heads`. En gren ar en fil med ett
 commit-id i, och att byta gren ar att skriva om HEAD och sedan gora
 arbetstradet lika med den refens commit.
+
+Refen ar det ENDA som haller en grens egna commitar vid liv: nar den ar
+borta stadar `pack` bort dem. Darfor vagrar `-d` mot en gren som inte ar
+ihopslagen, och `-D` ar hur du sager att du menar det.
 
 `switch` och `merge` kraver ett RENT trad. Bada skriver om arbetstradet,
 och det som bara finns hos dig skulle forsvinna utan att nagon sagt det.

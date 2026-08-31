@@ -101,6 +101,13 @@ define cmd_ur(rel: text) uses files, console:
     else:
         print_line("{rel} lag inte i kon")
 
+define cmd_drop(namn: text, tvinga: truth) uses files, console:
+    skal = drop_branch(root(), namn, tvinga)
+    if is_empty(skal):
+        print_line("grenen {namn} ar borta - `rune pack` stadar bort det ingen nar")
+    else:
+        print_line(skal)
+
 define cmd_branch(namn: text) uses files, console:
     if is_empty(namn):
         nu = current_branch(root())
@@ -213,6 +220,14 @@ define cmd_fsck() uses files, console:
     else:
         print_line("{n} objekt stammer inte med sitt id - hamta dem igen med `rune pull`")
 
+# Ett saknat argument ska saga vad kommandot vill ha, inte falla ur
+# runtimen pa ett index. Samma form som need_repo: sant = kor vidare.
+define needs_arg(args: [text], n: number, bruk: text) -> truth uses console:
+    if length(args) > n:
+        return true
+    print_line("bruk: {bruk}")
+    false
+
 define main() -> number uses files, console, clock, env, net:
     args = arguments()
     if length(args) < 2:
@@ -225,16 +240,23 @@ define main() -> number uses files, console, clock, env, net:
         if need_repo():
             cmd_add(if length(args) > 2 then args[2] else ".")
     else if cmd is "ur":
-        if need_repo():
+        if need_repo() and needs_arg(args, 2, "rune ur <fil>"):
             cmd_ur(args[2])
     else if cmd is "merge":
-        if need_repo():
+        if need_repo() and needs_arg(args, 2, "rune merge <gren>"):
             cmd_merge(args[2])
     else if cmd is "branch":
         if need_repo():
-            cmd_branch(if length(args) > 2 then args[2] else "")
+            flagga = if length(args) > 2 then args[2] else ""
+            if flagga is "-d" or flagga is "-D":
+                if length(args) > 3:
+                    cmd_drop(args[3], flagga is "-D")
+                else:
+                    print_line("rune branch {flagga} <namn>")
+            else:
+                cmd_branch(flagga)
     else if cmd is "switch":
-        if need_repo():
+        if need_repo() and needs_arg(args, 2, "rune switch <gren>"):
             cmd_switch(args[2])
     else if cmd is "status":
         if need_repo():
@@ -246,28 +268,28 @@ define main() -> number uses files, console, clock, env, net:
         if need_repo():
             cmd_log()
     else if cmd is "checkout":
-        if need_repo():
+        if need_repo() and needs_arg(args, 2, "rune checkout <commit>"):
             cmd_checkout(args[2])
     else if cmd is "lock":
-        if need_repo():
+        if need_repo() and needs_arg(args, 2, "rune lock <fil>"):
             cmd_lock(args[2])
     else if cmd is "unlock":
-        if need_repo():
+        if need_repo() and needs_arg(args, 2, "rune unlock <fil>"):
             cmd_unlock(args[2])
     else if cmd is "bryt":
-        if need_repo():
+        if need_repo() and needs_arg(args, 2, "rune bryt <fil>"):
             cmd_bryt(args[2])
     else if cmd is "locks":
         if need_repo():
             cmd_locks()
     else if cmd is "diff":
-        if need_repo():
+        if need_repo() and needs_arg(args, 2, "rune diff <fil> [commit]"):
             cmd_diff(args[2], if length(args) > 3 then args[3] else "")
     else if cmd is "history":
-        if need_repo():
+        if need_repo() and needs_arg(args, 2, "rune history <fil>"):
             cmd_history(args[2])
     else if cmd is "show":
-        if need_repo():
+        if need_repo() and needs_arg(args, 4, "rune show <commit> <fil> <mal>"):
             cmd_show(args[2], args[3], args[4])
     else if cmd is "clone":
         if length(args) < 4:
@@ -297,7 +319,8 @@ define main() -> number uses files, console, clock, env, net:
         if need_repo():
             cmd_fsck()
     else if cmd is "stat":
-        cmd_stat(args[2])
+        if needs_arg(args, 2, "rune stat <fil>"):
+            cmd_stat(args[2])
     else:
         print_line("okant kommando: {cmd}")
         return 1

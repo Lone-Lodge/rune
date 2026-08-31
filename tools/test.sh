@@ -189,6 +189,38 @@ check "arbetsfilen ar orord" "$(cat a.txt)" "main andrade"
 check "och HEAD star kvar" "$(cat .rune/refs/heads/main)" "$FORE"
 cd "$T"
 
+echo "== ta bort en gren =="
+mkdir -p "$T/bd"; cd "$T/bd"
+"$RUNE" init >/dev/null
+printf 'bas\n' > a.txt; "$RUNE" add . >/dev/null; "$RUNE" commit bas >/dev/null
+"$RUNE" branch klar >/dev/null; "$RUNE" branch exp >/dev/null
+"$RUNE" switch exp >/dev/null
+printf 'bara har\n' > b.txt; "$RUNE" add . >/dev/null; "$RUNE" commit e1 >/dev/null
+"$RUNE" switch main >/dev/null
+check "den du star pa gar inte" "$("$RUNE" branch -d main | grep -c 'byt gren forst')" "1"
+check "en gren som inte finns" "$("$RUNE" branch -d ingen | grep -c 'ingen gren som heter')" "1"
+"$RUNE" branch -d klar >/dev/null
+check "en ihopslagen gren gar bort" "$("$RUNE" branch | grep -c 'klar')" "0"
+check "en omergad vagras" "$("$RUNE" branch -d exp | grep -c 'inte ihopslagen')" "1"
+check "och star kvar" "$("$RUNE" branch | grep -c 'exp')" "1"
+# Refen ar det enda som haller grenens commitar vid liv.
+FORE=$("$RUNE" pack | grep -oE '[0-9]+' | head -1)
+"$RUNE" branch -D exp >/dev/null
+EFTER=$("$RUNE" pack | grep -oE '[0-9]+' | head -1)
+check "packen krymper nar grenen ar borta" "$([ "$EFTER" -lt "$FORE" ] && echo ja || echo nej)" "ja"
+check "och lagret ar sunt anda" "$("$RUNE" fsck | grep -c 'sunt')" "1"
+check "det som finns kvar gar att lasa" "$(cat a.txt)" "bas"
+cd "$T"
+
+echo "== ett saknat argument kraschar inte =="
+mkdir -p "$T/bruk"; cd "$T/bruk"
+"$RUNE" init >/dev/null
+check "stat utan fil" "$("$RUNE" stat 2>&1 | head -1)" "bruk: rune stat <fil>"
+check "switch utan gren" "$("$RUNE" switch 2>&1 | head -1)" "bruk: rune switch <gren>"
+check "show med for fa argument" "$("$RUNE" show abc 2>&1 | head -1)" "bruk: rune show <commit> <fil> <mal>"
+check "branch -d utan namn" "$("$RUNE" branch -d 2>&1 | head -1)" "rune branch -d <namn>"
+cd "$T"
+
 echo "== diff =="
 mkdir -p "$T/df"; cd "$T/df"
 "$RUNE" init >/dev/null

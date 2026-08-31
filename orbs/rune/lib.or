@@ -809,6 +809,25 @@ public define switch_branch(root: text, namn: text) -> text uses files:
         return "lagret saknar chunkar for {namn}"
     ""
 
+# Ta bort en gren. "" nar det gick, annars skalet.
+#
+# Refen ar det ENDA som haller grenens egna commitar vid liv: nar den ar
+# borta stadar `pack` bort dem. Darfor vagrar den mot en gren som inte ar
+# ihopslagen, och `tvinga` ar hur du sager att du menar det.
+public define drop_branch(root: text, namn: text, tvinga: truth) -> text uses files:
+    if not valid_branch(namn):
+        return "odugligt grennamn: {namn}"
+    if file_exists(heads_dir(root) + "/" + namn) is 0:
+        return "ingen gren som heter {namn}"
+    if namn is current_branch(root):
+        return "du star pa {namn} - byt gren forst"
+    if not tvinga:
+        deras = trim(read_file(heads_dir(root) + "/" + namn))
+        if merge_base(root, head_commit(root), deras) is not deras:
+            return "{namn} ar inte ihopslagen med {current_branch(root)} - `rune branch -D {namn}` tar bort den anda"
+    skrap = remove_file(heads_dir(root) + "/" + namn)
+    ""
+
 public define head_ref(root: text) -> text uses files:
     read_file(rune_dir(root) + "/HEAD")
 
