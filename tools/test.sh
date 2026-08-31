@@ -3,7 +3,14 @@
 # aterskapade filer byte for byte mot originalen.
 set -e
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# Windows ger .exe, POSIX inte. Sviten ska inte veta vilken plattform
+# den star pa - den ska veta var binaren ar.
 RUNE="$ROOT/build/rune_cli.exe"
+[ -x "$RUNE" ] || RUNE="$ROOT/build/rune_cli"
+# python3 pa de flesta POSIX, python i Git Bash. KOR den, inte bara leta:
+# Windows lagger en python3 pa PATH som bara finns for att saga at en att
+# installera den, och `command -v` hittar den glatt.
+PY=python3; $PY -c "" >/dev/null 2>&1 || PY=python
 T="$ROOT/build/t"
 [ -x "$RUNE" ] || { echo "bygg forst: orbit build"; exit 1; }
 
@@ -14,7 +21,7 @@ bad()  { echo "  FAIL  $1"; fail=1; }
 check(){ if [ "$2" = "$3" ]; then ok "$1"; else bad "$1 (fick '$2', ville '$3')"; fi; }
 
 # binart innehall med NUL-bytes, plus text
-python -c "
+$PY -c "
 import random; random.seed(3)
 open('bild.png','wb').write(bytes([137,80,78,71,13,10,26,10])+bytes(random.getrandbits(8) for _ in range(300000)))
 open('kod.txt','w').write('hej\n'*500)
@@ -23,7 +30,7 @@ open('sub/djup.bin','wb').write(bytes(random.getrandbits(8) for _ in range(12000
 open('.runeignore','w').write('skrap/\n')
 os.makedirs('skrap', exist_ok=True); open('skrap/strunt.txt','w').write('x')
 "
-md5() { python -c "import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())" "$1"; }
+md5() { $PY -c "import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())" "$1"; }
 H_PNG=$(md5 bild.png); H_TXT=$(md5 kod.txt); H_SUB=$(md5 sub/djup.bin)
 
 echo "== init och forsta commit =="
@@ -36,7 +43,7 @@ C1=$("$RUNE" commit "forsta" | cut -d' ' -f1)
 check "log har en commit" "$("$RUNE" log | wc -l)" "1"
 
 echo "== andring =="
-python -c "
+$PY -c "
 d=bytearray(open('bild.png','rb').read()); d[150000]^=0xFF
 open('bild.png','wb').write(d)"
 check "status ser en andrad" "$("$RUNE" status | grep -c 'andrat')" "1"
@@ -67,7 +74,7 @@ echo "== statcachen =="
 check "status skriver en cache" "$([ -f .rune/stat ] && echo ja || echo nej)" "ja"
 f1="$("$RUNE" status)"
 check "andra korningen ger samma svar" "$("$RUNE" status)" "$f1"
-python -c "
+$PY -c "
 d=bytearray(open('bild.png','rb').read()); d[9000]^=0xFF
 open('bild.png','wb').write(d)"
 check "cachen slapper igenom en andring" "$("$RUNE" status | grep -c 'bild.png')" "1"
@@ -146,9 +153,9 @@ mkdir -p "$T/kz"; cd "$T/kz"
 echo "== komprimeringen =="
 "$RUNE" init >/dev/null
 for q in $(seq 1 3000); do echo "public define nagot(x: number) -> number = x + 1"; done > text.txt
-python -c "import os;open('slump.bin','wb').write(os.urandom(400000))"
+$PY -c "import os;open('slump.bin','wb').write(os.urandom(400000))"
 "$RUNE" add . >/dev/null; "$RUNE" commit ett >/dev/null; "$RUNE" pack >/dev/null
-PACK=$(python -c "import glob,os;print(os.path.getsize(glob.glob('.rune/pack/*.pack')[0]))")
+PACK=$($PY -c "import glob,os;print(os.path.getsize(glob.glob('.rune/pack/*.pack')[0]))")
 check "packen ar mindre an radatan" "$([ "$PACK" -lt 500000 ] && echo ja || echo nej)" "ja"
 check "och storre an bara slumpdelen" "$([ "$PACK" -gt 400000 ] && echo ja || echo nej)" "ja"
 H=$(cat .rune/refs/heads/main)
@@ -164,7 +171,7 @@ echo "== skrapet =="
 # koar, sparar igen - och ingenting stadade det forut.
 mkdir -p "$T/gc"; cd "$T/gc"
 "$RUNE" init >/dev/null
-for i in 1 2 3; do python -c "import os;open('a.bin','wb').write(os.urandom(500000))"; "$RUNE" add . >/dev/null; done
+for i in 1 2 3; do $PY -c "import os;open('a.bin','wb').write(os.urandom(500000))"; "$RUNE" add . >/dev/null; done
 "$RUNE" commit ett >/dev/null
 objekt(){ find .rune/chunks .rune/blobs .rune/commits .rune/manifests -type f 2>/dev/null | wc -l; }
 FORE=$(objekt)
@@ -174,9 +181,9 @@ check "pack tog bort skrapet" "$([ "$EFTER" -lt "$FORE" ] && echo ja || echo nej
 check "och lagret ar sunt efterat" "$("$RUNE" fsck | grep -c 'sunt')" "1"
 H=$(cat .rune/refs/heads/main)
 rm a.bin; "$RUNE" checkout "$H" >/dev/null
-check "commiten gar fortfarande att checka ut" "$(python -c "import os;print(os.path.getsize('a.bin'))")" "500000"
+check "commiten gar fortfarande att checka ut" "$($PY -c "import os;print(os.path.getsize('a.bin'))")" "500000"
 # Det KOADE far inte stadas bort under fotterna pa den som koade det.
-python -c "import os;open('b.bin','wb').write(os.urandom(100000))"
+$PY -c "import os;open('b.bin','wb').write(os.urandom(100000))"
 "$RUNE" add b.bin >/dev/null
 "$RUNE" pack >/dev/null
 "$RUNE" commit tva >/dev/null
@@ -189,7 +196,7 @@ echo "== packen =="
 # efter varandra med ett register bredvid.
 mkdir -p "$T/pk"; cd "$T/pk"
 "$RUNE" init >/dev/null
-python -c "
+$PY -c "
 import os
 for i in range(300):
     d='d%02d'%(i%10); os.makedirs(d,exist_ok=True)
@@ -206,7 +213,7 @@ H=$(cat .rune/refs/heads/main); rm -rf d00
 "$RUNE" checkout "$H" >/dev/null
 check "checkout ur packen" "$("$RUNE" status | wc -l)" "0"
 # En byte fel mitt i packen ska hittas, inte tigas ihjal.
-python -c "
+$PY -c "
 import glob
 p=glob.glob('.rune/pack/*.pack')[0]
 d=bytearray(open(p,'rb').read()); d[5000]^=0xFF; open(p,'wb').write(d)"
@@ -216,14 +223,14 @@ cd "$T"
 echo "== lagrets sundhet =="
 mkdir -p "$T/sund"; cd "$T/sund"
 "$RUNE" init >/dev/null
-python -c "import os;open('a.bin','wb').write(os.urandom(200000))"
+$PY -c "import os;open('a.bin','wb').write(os.urandom(200000))"
 "$RUNE" add . >/dev/null; "$RUNE" commit "ett" >/dev/null
 check "fsck ser ett sunt lager" "$("$RUNE" fsck | grep -c 'sunt')" "1"
 check "stat laser inte hela filen" "$("$RUNE" stat a.bin | grep -c 'chunkar')" "1"
 # Namnet ar hashen av innehallet, sa en andrad byte gor kroppen till nagot
 # annat an det objekt den utger sig for att vara. Objekten ligger i packen
 # nu, sa det ar dar bytet ska andras.
-python -c "
+$PY -c "
 import glob
 p=glob.glob('.rune/pack/*.pack')[0]
 d=bytearray(open(p,'rb').read()); d[10]^=0xFF; open(p,'wb').write(d)"

@@ -59,9 +59,21 @@ forsvinner.
 
 ## Kor
 
+    bash tools/gate.sh          # bygg + bada sviterna, ett kommando
+
     orbit build
     bash tools/test.sh          # hela flodet mot ett engangsrepo
     bash tools/remote_test.sh   # server + tva klienter
+
+Sviterna antar inte langre Windows: de hittar binaren med eller utan
+`.exe` och kor `python3` dar den finns. De ar dock bara KORDA pa Windows.
+POSIX-grenarna i `file_readonly`, `file_seek` och `mkdir_all` ar skrivna
+men aldrig exekverade, och det ar skillnad pa rimligt och bevisat.
+
+Ingen CI. rune bor i ett repo utan remote, och orion - som bygget behover
+- ar ett eget repo bredvid. Det ar inte en glomska utan ett val som inte
+ar taget: rune behover antingen ett eget repo eller ett llstudios med en
+remote innan en workflow har nagonstans att kora.
 
     rune init                   # starta ett repo har
     rune add .                  # koa hela tradet

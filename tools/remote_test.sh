@@ -4,7 +4,14 @@
 # isar, och las som en annan maskin haller.
 set -e
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# Windows ger .exe, POSIX inte. Sviten ska inte veta vilken plattform
+# den star pa - den ska veta var binaren ar.
 RUNE="$ROOT/build/rune_cli.exe"
+[ -x "$RUNE" ] || RUNE="$ROOT/build/rune_cli"
+# python3 pa de flesta POSIX, python i Git Bash. KOR den, inte bara leta:
+# Windows lagger en python3 pa PATH som bara finns for att saga at en att
+# installera den, och `command -v` hittar den glatt.
+PY=python3; $PY -c "" >/dev/null 2>&1 || PY=python
 T="$ROOT/build/rt"
 PORT=7429
 URL="http://127.0.0.1:$PORT"
@@ -16,13 +23,13 @@ ok()   { echo "  PASS  $1"; }
 bad()  { echo "  FAIL  $1"; fail=1; }
 check(){ if [ "$2" = "$3" ]; then ok "$1"; else bad "$1 (fick '$2', ville '$3')"; fi; }
 has()  { if echo "$2" | grep -q "$3"; then ok "$1"; else bad "$1 (fick '$2')"; fi; }
-sha()  { python -c "import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())" "$1"; }
-skrivbart(){ python -c "import sys
+sha()  { $PY -c "import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())" "$1"; }
+skrivbart(){ $PY -c "import sys
 try:
     open(sys.argv[1],'ab').close(); print('ja')
 except PermissionError:
     print('nej')" "$1"; }
-skydd(){ python -c "import os,stat,sys;m=os.stat(sys.argv[1]).st_mode;print('skrivbar' if m & stat.S_IWRITE else 'skyddad')" "$1"; }
+skydd(){ $PY -c "import os,stat,sys;m=os.stat(sys.argv[1]).st_mode;print('skrivbar' if m & stat.S_IWRITE else 'skyddad')" "$1"; }
 
 HEMLIS="delad-hemlighet-123"
 ( cd srv && "$RUNE" init >/dev/null && "$RUNE" secret "$HEMLIS" >/dev/null )
@@ -35,7 +42,7 @@ for i in $(seq 1 20); do curl -s -m 1 "$URL/ref" >/dev/null 2>&1 && break; done
 
 echo "== push av binart =="
 cd "$T/a"
-python -c "
+$PY -c "
 import random; random.seed(5)
 open('stor.bin','wb').write(bytes(random.getrandbits(8) for _ in range(3000000)))
 open('text.md','w').write('hej\n'*200)"
@@ -54,7 +61,7 @@ has "clone vagrar over ett befintligt repo" "$("$RUNE" clone "$URL" "$HEMLIS")" 
 
 echo "== inkrementell push =="
 cd "$T/a"
-python -c "
+$PY -c "
 d=bytearray(open('stor.bin','rb').read()); d[1500000]^=0xFF
 open('stor.bin','wb').write(d)"
 "$RUNE" add . >/dev/null; "$RUNE" commit "en byte" >/dev/null
@@ -125,7 +132,7 @@ check "tree listar sokvagarna" "$(curl -s -H "$AUTH" "$URL/tree" | grep -c 'stor
 curl -s -H "$AUTH" "$URL/file?path=stor.bin" -o hel.tmp
 check "file ger hela filen, byte for byte" "$(sha hel.tmp)" "$(sha stor.bin)"
 curl -s -H "$AUTH" "$URL/file?path=stor.bin&from=1500000&to=1500016" -o bit.tmp
-check "ett intervall mitt i en 3 MB-binar" "$(python -c "
+check "ett intervall mitt i en 3 MB-binar" "$($PY -c "
 d=open('stor.bin','rb').read()[1500000:1500016]
 g=open('bit.tmp','rb').read()
 print('lika' if d==g else 'skiljer')")" "lika"
@@ -137,7 +144,7 @@ echo "== skriva in i lagret utifran =="
 # Ett innehall in, en commit ut. Ingen ko: den ar en delad fil, och en
 # server som stagar at en klient hade lagt nagon annans arbete i din commit.
 cd "$T/a"
-python -c "
+$PY -c "
 import os
 b = bytearray(os.urandom(300000))
 b[1000:1004] = b'\r\n\r\n'   # sekvensen som kapar en naiv HTTP-lasare
