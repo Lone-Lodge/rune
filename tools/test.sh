@@ -88,6 +88,36 @@ check "okand fil har ingen" "$("$RUNE" history finns-inte.txt | grep -c 'ingen h
 "$RUNE" show "$C1" bild.png v1.bin >/dev/null
 check "show ger commit 1:s innehall" "$(md5 v1.bin)" "$H_PNG"
 
+echo "== diff =="
+mkdir -p "$T/df"; cd "$T/df"
+"$RUNE" init >/dev/null
+printf 'ett
+tva
+tre
+fyra
+fem
+' > a.txt
+"$RUNE" add . >/dev/null; "$RUNE" commit ett >/dev/null
+check "ingen skillnad nar inget andrats" "$("$RUNE" diff a.txt | grep -c 'ingen skillnad')" "1"
+printf 'ett
+tva
+TRE
+fyra
+ny
+fem
+' > a.txt
+check "en andrad rad ut" "$("$RUNE" diff a.txt | grep -c '^  - 3     tre')" "1"
+check "och in" "$("$RUNE" diff a.txt | grep -c '^  + 3     TRE')" "1"
+check "en tillagd rad" "$("$RUNE" diff a.txt | grep -c '^  + 5     ny')" "1"
+check "orord borjan och slut namns inte" "$("$RUNE" diff a.txt | wc -l)" "3"
+# En binar har inga meningsfulla rader och ska sagas ifran om, inte
+# jamforas byte for byte tills nagot ser konstigt ut.
+$PY -c "import os;open('b.bin','wb').write(os.urandom(1000))"
+"$RUNE" add . >/dev/null; "$RUNE" commit tva >/dev/null
+$PY -c "import os;open('b.bin','wb').write(os.urandom(1000))"
+check "binar sager ifran" "$("$RUNE" diff b.bin | grep -c 'binar')" "1"
+cd "$T"
+
 echo "== las =="
 printf 'ny
 ' > last.txt

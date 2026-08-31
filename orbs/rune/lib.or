@@ -1192,6 +1192,105 @@ public define file_at(root: text, id: text, rel: text) -> text uses files:
     blob = lookup(commit_manifest(root, id), rel)
     if is_empty(blob) then "" else blob_bytes(rune_dir(root), blob)
 
+# --- diff ----------------------------------------------------------------
+# Rader ut och in mellan tva versioner. BARA for text: en binar har inga
+# meningsfulla rader, och for den ar `history` plus `show` svaret.
+#
+# Gemensam borjan och gemensamt slut skalas bort forst, och det ar nastan
+# hela arbetet i en verklig andring. Pa det som blir kvar gors en riktig
+# LCS. Blir mitten storre an taket sags den vara ETT utbytt block, och det
+# STAR i utskriften - ett tak som tiger blir ett fel man inte ser.
+define diff_cap() -> number = 250000
+
+# Bar texten en nollbyte ar den inte text.
+public define is_binary(t: text) -> truth:
+    b = bytes_of(t)
+    n = bytes_count(b)
+    edit hit = false
+    edit i = 0
+    loop:
+        if i >= n or i >= 8192 or hit:
+            break
+        if byte_at(b, i) is 0:
+            hit = true
+        i = i + 1
+    hit
+
+define rad(tecken: text, nr: number, text_rad: text) -> text = tecken + tab() + (nr as text) + tab() + text_rad
+
+# Rader "tecken<TAB>radnummer<TAB>text", tecken "-" eller "+". Tomt betyder
+# ingen skillnad.
+public define diff_rows(gammal: [text], ny: [text]) -> [text]:
+    n = length(gammal)
+    m = length(ny)
+    # Gemensam borjan.
+    edit p = 0
+    loop:
+        if p >= n or p >= m:
+            break
+        if gammal[p] is not ny[p]:
+            break
+        p = p + 1
+    # Gemensamt slut, men aldrig in i det vi redan raknat som borjan.
+    edit q = 0
+    loop:
+        if n - q <= p or m - q <= p:
+            break
+        if gammal[n - 1 - q] is not ny[m - 1 - q]:
+            break
+        q = q + 1
+    an = n - q - p
+    bm = m - q - p
+    if an is 0 and bm is 0:
+        return []
+    if an * bm > diff_cap():
+        edit stor = ["!" + tab() + (p + 1 as text) + tab() + "for stort for en radjamforelse - {an} rader ut, {bm} in"]
+        return stor
+    # LCS i en platt tabell: (an+1) x (bm+1), radvis.
+    bredd = bm + 1
+    edit tab_lcs = []
+    loop x in 0 until (an + 1) * bredd:
+        tab_lcs = append(tab_lcs, 0)
+    edit i = an - 1
+    loop:
+        if i < 0:
+            break
+        edit j = bm - 1
+        loop:
+            if j < 0:
+                break
+            v = if gammal[p + i] is ny[p + j] then tab_lcs[(i + 1) * bredd + j + 1] + 1 else (if tab_lcs[(i + 1) * bredd + j] >= tab_lcs[i * bredd + j + 1] then tab_lcs[(i + 1) * bredd + j] else tab_lcs[i * bredd + j + 1])
+            tab_lcs = set(tab_lcs, i * bredd + j, v)
+            j = j - 1
+        i = i - 1
+    edit ut = []
+    edit a = 0
+    edit b = 0
+    loop:
+        if a >= an and b >= bm:
+            break
+        if a < an and b < bm and gammal[p + a] is ny[p + b]:
+            a = a + 1
+            b = b + 1
+        # Vid lika lutar vi at BORT forst: en andrad rad las som "sa har
+        # var det, sa har blev det", inte tvartom.
+        else if a < an and (b >= bm or tab_lcs[(a + 1) * bredd + b] >= tab_lcs[a * bredd + b + 1]):
+            ut = append(ut, rad("-", p + a + 1, gammal[p + a]))
+            a = a + 1
+        else:
+            ut = append(ut, rad("+", p + b + 1, ny[p + b]))
+            b = b + 1
+    ut
+
+# Arbetsfilen mot samma sokvag i en commit. "" som id betyder HEAD.
+public define diff_file(root: text, id: text, rel: text) -> [text] uses files:
+    c = if is_empty(id) then head_commit(root) else id
+    fore = file_at(root, c, rel)
+    nu = if file_exists(root + "/" + rel) is not 0 then read_file(root + "/" + rel) else ""
+    if is_binary(fore) or is_binary(nu):
+        return ["!" + tab() + "0" + tab() + "binar - `rune history` och `rune show` i stallet"]
+    diff_rows(split(fore, "\n"), split(nu, "\n"))
+
 # --- statcachen -----------------------------------------------------------
 # `status` hashade om HELA arbetstradet varje gang. Filen laser vi anda,
 # men chunkningen och hashningen ar det dyra, och for en fil som inte rort

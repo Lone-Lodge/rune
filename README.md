@@ -80,6 +80,7 @@ remote innan en workflow har nagonstans att kora.
     rune status                 # koat / nytt / andrat / borttaget
     rune commit "meddelande"
     rune log
+    rune diff <fil> [commit]    # rader ut och in mot HEAD, eller mot en commit
     rune history <fil>          # filens versioner, nyast forst
     rune show <commit> <fil> <ut>   # innehallet vid en commit, till en fil
     rune checkout <commit>      # skriv ut en ogonblicksbild
@@ -121,6 +122,21 @@ For ett Unreal-projekt racker:
     DerivedDataCache/
     Binaries/
     .vs/
+
+## Diff
+
+    rune diff <fil>             mot HEAD
+    rune diff <fil> <commit>    mot en aldre
+
+BARA for text. En binar har inga meningsfulla rader, och for den ar
+`history` plus `show` svaret - `diff` sager det i stallet for att jamfora
+byte for byte tills nagot ser konstigt ut.
+
+Gemensam borjan och gemensamt slut skalas bort forst, och det ar nastan
+hela arbetet i en verklig andring. Pa det som blir kvar gors en riktig
+LCS. Blir mitten storre an taket - 250 000 radpar - sags den vara ETT
+utbytt block, och det STAR i utskriften. Ett tak som tiger blir ett fel
+man inte ser.
 
 ## Las
 

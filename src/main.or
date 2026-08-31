@@ -82,6 +82,19 @@ define cmd_locks() uses files, console, net:
     if n is 0:
         print_line("inga las")
 
+define cmd_diff(rel: text, vad: text) uses files, console:
+    id = if is_empty(vad) then "" else resolve(root(), vad)
+    if not is_empty(vad) and is_empty(id):
+        print_line("ingen entydig commit for {vad}")
+        return
+    edit n = 0
+    loop r in diff_file(root(), id, rel):
+        f = split(r, text_of([9]))
+        print_line("  {f[0]} {pad_right(f[1], 6, " ")}{f[2]}")
+        n = n + 1
+    if n is 0:
+        print_line("ingen skillnad")
+
 define cmd_status() uses files, console:
     loop row in status(root()):
         f = split(row, text_of([9]))
@@ -197,6 +210,9 @@ define main() -> number uses files, console, clock, env, net:
     else if cmd is "locks":
         if need_repo():
             cmd_locks()
+    else if cmd is "diff":
+        if need_repo():
+            cmd_diff(args[2], if length(args) > 3 then args[3] else "")
     else if cmd is "history":
         if need_repo():
             cmd_history(args[2])
