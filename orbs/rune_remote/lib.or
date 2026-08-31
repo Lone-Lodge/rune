@@ -155,6 +155,78 @@ public define set_secret(root: text, s: text) uses files:
 define secret_ok(root: text, given: text) -> truth uses files:
     sha256(given) is sha256(secret(root))
 
+# --- vem, och inte bara att nagon ---------------------------------------
+# En delad hemlighet oppnar dorren men sager inte VEM som kom in, sa ett
+# las bar ett namn klienten sjalv angav. Ger man varje person en EGEN
+# nyckel svarar servern pa fragan sjalv: namnet ar det som star bredvid
+# den nyckel som anvandes, inte det klienten pastar.
+#
+# .rune/users, en rad per person: "namn<TAB>hemlighet". Finns filen inte
+# galler den delade hemligheten som forut - ett repo som fungerade igar
+# fungerar likadant idag.
+
+define users_path(root: text) -> text = rune_dir(root) + "/users"
+
+define user_rows(root: text) -> [text] uses files:
+    p = users_path(root)
+    if file_exists(p) is 0:
+        return []
+    edit ut = []
+    loop r in split(read_file(p), text_of([10])):
+        if not is_empty(trim(r)):
+            ut = append(ut, trim(r))
+    ut
+
+public define has_users(root: text) -> truth uses files = length(user_rows(root)) > 0
+
+public define user_names(root: text) -> [text] uses files:
+    edit ut = []
+    loop r in user_rows(root):
+        f = split(r, text_of([9]))
+        ut = append(ut, f[0])
+    ut
+
+# Namnet bakom en nyckel, eller "" nar ingen bar den. Hasharna jamfors av
+# samma skal som i secret_ok: langden ska inte lacka ut.
+public define who_is(root: text, given: text) -> text uses files:
+    if is_empty(given):
+        return ""
+    h = sha256(given)
+    edit namn = ""
+    loop r in user_rows(root):
+        f = split(r, text_of([9]))
+        if length(f) > 1 and is_empty(namn) and sha256(f[1]) is h:
+            namn = f[0]
+    namn
+
+# Lagg till eller byt nyckel for en person. Ett namn far inte bara tabb
+# eller radbrytning - det ar filens tva skiljetecken.
+public define set_user(root: text, namn: text, nyckel: text) -> truth uses files:
+    if is_empty(trim(namn)) or is_empty(trim(nyckel)):
+        return false
+    if index_of(namn, text_of([9])) >= 0 or index_of(namn, text_of([10])) >= 0:
+        return false
+    edit ut = []
+    loop r in user_rows(root):
+        f = split(r, text_of([9]))
+        if f[0] is not trim(namn):
+            ut = append(ut, r)
+    ut = append(ut, trim(namn) + text_of([9]) + trim(nyckel))
+    write_file(users_path(root), join(ut, text_of([10])) + text_of([10])) is not 0
+
+public define drop_user(root: text, namn: text) -> truth uses files:
+    edit ut = []
+    edit hittad = false
+    loop r in user_rows(root):
+        f = split(r, text_of([9]))
+        if f[0] is trim(namn):
+            hittad = true
+        else:
+            ut = append(ut, r)
+    if not hittad:
+        return false
+    write_file(users_path(root), if length(ut) is 0 then "" else join(ut, text_of([10])) + text_of([10])) is not 0
+
 # "Bearer xyz" -> "xyz".
 define bearer(head: text) -> text:
     v = header_value(head, "authorization")
@@ -283,7 +355,9 @@ define rader_svar(rader: [text]) -> text:
 define tal(t: text, standard: number) -> number:
     if is_empty(t) then standard else int_from_text(t)
 
-define handle(root: text, req: Request) -> Svar uses files, clock:
+# `vem` ar den servern VET att den talar med, eller "" nar repot kor pa en
+# delad hemlighet. Ar den satt vinner den over varje namn klienten anger.
+define handle(root: text, req: Request, vem: text) -> Svar uses files, clock:
     head = req.head
     body = req.body
     rl = request_line(head)
@@ -373,8 +447,8 @@ define handle(root: text, req: Request) -> Svar uses files, clock:
         return Svar{kod: 200, bitar: file_parts(root, c, rel, tal(query_arg(path, "from"), 0), int_from_text(till_arg))}
 
     # Skrivvagen. Ett innehall in, en commit ut - se commit_file om varfor
-    # ingen ko ar inblandad. `who` ar den som skriver, samma sjalvangivna
-    # namn som lasen bar: hemligheten ar en dorrnyckel, inte en identitet.
+    # ingen ko ar inblandad. `who` ar den som skriver. Kor repot pa
+    # egna nycklar ar det servern som vet namnet, annars ar det klientens.
     if method is "POST" and length(seg) is 1 and seg[0] is "file":
         rel = url_decode(query_arg(path, "path"))
         if is_empty(rel):
@@ -383,7 +457,8 @@ define handle(root: text, req: Request) -> Svar uses files, clock:
         msg = url_decode(query_arg(path, "msg"))
         if is_empty(req.fil):
             return fel_svar(409, "kroppen kom inte fram hel")
-        sk = commit_file(root, rel, req.fil, if is_empty(who) then "okand" else who, if is_empty(msg) then rel else msg)
+        skrivare = if not is_empty(vem) then vem else (if is_empty(who) then "okand" else who)
+        sk = commit_file(root, rel, req.fil, skrivare, if is_empty(msg) then rel else msg)
         if is_empty(sk.id):
             # 409: nagon annan haller filen, eller disken sa nej. Bada ar
             # "din skrivning hande inte", och kroppen sager vilket.
@@ -401,8 +476,8 @@ define handle(root: text, req: Request) -> Svar uses files, clock:
         if length(rader) < 2:
             return ok_svar("saknar vag och agare")
         vag = trim(rader[0])
-        vem = trim(rader[1])
-        return ok_svar(if seg[0] is "lock" then lock(root, vag, vem) else unlock(root, vag, vem))
+        agare = if is_empty(vem) then trim(rader[1]) else vem
+        return ok_svar(if seg[0] is "lock" then lock(root, vag, agare) else unlock(root, vag, agare))
 
     fel_svar(404, "")
 
@@ -441,8 +516,11 @@ public define serve(root: text, port: number) uses net, files, clock, console:
                 if is_empty(req.head):
                     break
                 edit lever = false
-                if secret_ok(root, bearer(req.head)):
-                    sv = handle(root, req)
+                nyckel = bearer(req.head)
+                vem = if has_users(root) then who_is(root, nyckel) else ""
+                slapp_in = if has_users(root) then not is_empty(vem) else secret_ok(root, nyckel)
+                if slapp_in:
+                    sv = handle(root, req, vem)
                     lever = vill_leva(req.head)
                     answer_code(conn, sv.kod, reason_of(sv.kod), sv.bitar, lever)
                 else:

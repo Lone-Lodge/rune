@@ -190,6 +190,31 @@ cd "$T/b"; USERNAME=kollega "$RUNE" add . >/dev/null 2>&1 || true
 check "skyddet slapper med laset" "$(skydd stor.bin)" "skrivbar"
 check "och gar att skriva igen" "$(skrivbart stor.bin)" "ja"
 
+echo "== egna nycklar =="
+# Ett eget repo pa en egen port: de forra testerna kor pa delad hemlighet.
+mkdir -p "$T/srv2"
+( cd "$T/srv2" && "$RUNE" init >/dev/null && "$RUNE" secret delad >/dev/null
+  printf 'bas\n' > a.txt && "$RUNE" add . >/dev/null && "$RUNE" commit bas >/dev/null
+  "$RUNE" user johan nyckel-j >/dev/null && "$RUNE" user anna nyckel-a >/dev/null )
+check "user listar namnen" "$(cd "$T/srv2" && "$RUNE" user | wc -l)" "2"
+check "och inte nycklarna" "$(cd "$T/srv2" && "$RUNE" user | grep -c 'nyckel-')" "0"
+( cd "$T/srv2" && exec "$RUNE" serve 7432 >/dev/null 2>&1 ) &
+SRV2=$!
+# Faller sviten mitt i ska ingen server bli kvar och halla mappen: nasta
+# kornings `rm -rf` kan da inte stada, och den faller pa fel sak.
+trap 'kill $SRV $SRV2 2>/dev/null || true' EXIT
+U2="http://127.0.0.1:7432"
+for i in $(seq 1 20); do curl -s -m 1 -H "Authorization: Bearer nyckel-j" "$U2/ref" >/dev/null 2>&1 && break; done
+check "den delade hemligheten galler inte langre" "$(curl -s -o /dev/null -w '%{http_code}' -H 'Authorization: Bearer delad' $U2/locks)" "401"
+check "en gissad nyckel kommer inte in" "$(curl -s -o /dev/null -w '%{http_code}' -H 'Authorization: Bearer gissning' $U2/locks)" "401"
+check "en egen nyckel kommer in" "$(curl -s -o /dev/null -w '%{http_code}' -H 'Authorization: Bearer nyckel-a' $U2/locks)" "200"
+# Anna laser filen men PASTAR att hon ar johan. Servern ska tro nyckeln.
+printf 'a.txt\njohan\n' | curl -s -X POST --data-binary @- -H "Authorization: Bearer nyckel-a" $U2/lock >/dev/null
+has "laset bar nyckelns namn" "$(curl -s -H 'Authorization: Bearer nyckel-a' $U2/locks)" "anna"
+check "och alltsa inte det klienten angav" "$(curl -s -H 'Authorization: Bearer nyckel-a' $U2/locks | grep -c johan)" "0"
+check "en borttagen nyckel slutar galla" "$(cd "$T/srv2" && "$RUNE" user -d anna >/dev/null; curl -s -o /dev/null -w '%{http_code}' -H 'Authorization: Bearer nyckel-a' $U2/locks)" "401"
+kill $SRV2 2>/dev/null || true
+
 kill $SRV 2>/dev/null || true
 cd "$ROOT"
 for i in $(seq 1 20); do rm -rf "$T" 2>/dev/null && break; done

@@ -228,10 +228,27 @@ define needs_arg(args: [text], n: number, bruk: text) -> truth uses console:
     print_line("bruk: {bruk}")
     false
 
+define cmd_user(namn: text, nyckel: text) uses files, console:
+    if is_empty(namn):
+        n = user_names(root())
+        if length(n) is 0:
+            print_line("inga egna nycklar - repot kor pa den delade hemligheten")
+        else:
+            loop u in n:
+                print_line("  {u}")
+    else if namn is "-d":
+        print_line(if drop_user(root(), nyckel) then "{nyckel} har ingen nyckel langre" else "ingen som heter {nyckel}")
+    else if is_empty(nyckel):
+        print_line("bruk: rune user <namn> <nyckel>")
+    else if set_user(root(), namn, nyckel):
+        print_line("{namn} har en nyckel - lasen pa servern bar nu det namnet, inte det klienten anger")
+    else:
+        print_line("gick inte att satta nyckel for {namn}")
+
 define main() -> number uses files, console, clock, env, net:
     args = arguments()
     if length(args) < 2:
-        print_line("rune init | add | status | commit | log | diff | checkout | history | show | branch | switch | merge | lock | unlock | locks | clone | remote | push | pull | serve | pack | fsck | stat")
+        print_line("rune init | add | status | commit | log | diff | checkout | history | show | branch | switch | merge | lock | unlock | locks | clone | remote | push | pull | serve | pack | fsck | stat | secret | user")
         return 1
     cmd = args[1]
     if cmd is "init":
@@ -318,6 +335,9 @@ define main() -> number uses files, console, clock, env, net:
     else if cmd is "fsck":
         if need_repo():
             cmd_fsck()
+    else if cmd is "user":
+        if need_repo():
+            cmd_user(if length(args) > 2 then args[2] else "", if length(args) > 3 then args[3] else "")
     else if cmd is "stat":
         if needs_arg(args, 2, "rune stat <fil>"):
             cmd_stat(args[2])

@@ -98,6 +98,7 @@ men aldrig exekverade, och det ar skillnad pa rimligt och bevisat.
     rune fsck                   # las varje objekt och jamfor med dess id
     rune gc                     # ta bort det ingen commit nar
     rune pack                   # skriv om lagret till en enda pack
+    rune user [namn] [nyckel]   # vem som far tala med servern
 
 Ett commit-id far forkortas sa langt det ar entydigt, alltsa de tolv
 tecken `rune log` visar. Ar prefixet tvetydigt sager rune det i stallet
@@ -175,9 +176,10 @@ lamnar annars sitt las for alltid, och da star filen last tills nagon
 redigerar lasfilen for hand. Darfor ett eget ord: det ska ga att lasa i en
 terminalhistorik vad som hande.
 
-Vem som helst med hemligheten far bryta. Hemligheten ar en dorrnyckel och
-inte en identitet, sa det finns ingen grund att skilja pa vem som far -
-det som finns ar att det SYNS.
+Vem som helst som slapps in far bryta, aven nar var och en har sin egen
+nyckel. Ett las som maste brytas ar oftast ett las vars agare inte finns
+kvar att fraga, sa en regel om vem som far skulle sta i vagen for
+precis det fall ordet finns till for. Det som finns ar att det SYNS.
 
     .rune/locks    "sokvag<TAB>agare<TAB>unixtid", en per rad, sorterad
 
@@ -267,13 +269,30 @@ natet som ett `Authorization`-huvud - aldrig i sokvagen, for en URL hamnar
 i loggar och i kommandoradshistorik. http-orben skickar huvuden genom en
 konfigfil, sa den syns inte heller for den som listar processer.
 
-Hemligheten ar en **dorrnyckel, inte en identitet**. Den sager att du far
-tala med servern, inte VEM du ar. Lasen bar fortfarande ett namn som
-klienten sjalv anger, sa den som har nyckeln kan ange vilket namn som
-helst. Det racker for ett lag som redan litar pa varandra. Det racker inte
-mot oppna natet, och det ar inte heller krypterat - en avlyssnare pa
-vagen ser bade hemligheten och innehallet. Bakom brandvagg eller VPN, med
-andra ord, men nu med en dorr i stallet for ett halt i vaggen.
+En delad hemlighet ar en **dorrnyckel, inte en identitet**: den sager att
+du far tala med servern, inte VEM du ar. Lasen bar da ett namn som
+klienten sjalv anger, sa den som har nyckeln kan kalla sig vad som helst.
+
+### Egna nycklar
+
+    rune user                   vilka som har en nyckel
+    rune user <namn> <nyckel>   ge nagon en, eller byt
+    rune user -d <namn>         ta bort den
+
+Ger man varje person en egen nyckel svarar servern pa fragan sjalv:
+**namnet ar det som star bredvid den nyckel som anvandes**, inte det
+klienten pastar. Anna kan lasa en fil och skriva "johan" i requesten -
+laset bar anda `anna`. Samma sak for den som skriver via `/file`.
+
+    .rune/users    "namn<TAB>nyckel", en per rad
+
+Finns filen inte galler den delade hemligheten precis som forut. Finns den
+galler BARA de nycklarna: den delade slutar slappa in, sa det gar inte att
+halvvags byta och tro att man bytt.
+
+Det ar fortfarande inte krypterat - en avlyssnare pa vagen ser bade
+nyckeln och innehallet. Bakom brandvagg eller VPN, med andra ord, men nu
+med en dorr som vet vem som gick in.
 
 Med en remote satt ar **servern sanningen om lasen**. Ett las som bara finns
 lokalt kan aldrig saga att nagon ANNAN haller filen, och da ar det ingen
@@ -329,8 +348,8 @@ commit-id:t i bada fallen.
 
 Lassparren ligger i lagret och inte i den som svarar pa requesten, precis
 som for `add`. Haller nagon annan sokvagen svarar servern 409 med vem det
-ar. `who` ar samma sjalvangivna namn som lasen bar: hemligheten ar en
-dorrnyckel, inte en identitet.
+ar. `who` ar den som skriver. Kor repot pa egna
+nycklar ar det servern som vet namnet, annars ar det klientens eget ord.
 
 Kroppen lases som exakt Content-Length bytes, sa en binar som rakar
 innehalla `\r\n\r\n` overlever. Sviten skriver en 300 kB-binar med
@@ -380,13 +399,10 @@ Det som ar kvar i `add` ar disken: tva nya objekt per fil, och en ny fil pa
 Windows kostar nagra millisekunder. Kor `add` en gang till pa samma trad och
 den tar 0,4 s - da finns objekten redan.
 
-**Ingen packning, och det ar ett beslut.** Att lagga manga objekt i fa
-filer, som git gor, skulle ta ner de 43 sekunderna. Men kostnaden betalas
-EN gang per nytt innehall: andra vandan over samma trad ar 0,4 s. Priset
-vore en formatandring som ror uppslagning, `has_object`, remoteprotokollet
-och ett behov av gc - alltsa nastan varje del av lagret - for att gora en
-engangskostnad mindre. Det ar fel byte just nu. Om ett trad nagon gang
-tar minuter att koa forsta gangen ar det da fragan ska stallas om.
+**Har stod en gang att packning var fel byte**, eftersom kostnaden betalas
+en gang per nytt innehall och andra vandan over samma trad anda ar 0,4 s.
+Det holl tills lagret matte sig mot git: `pack` finns nu, och avsnittet om
+den langre ner beskriver vad den kostade och gav.
 
 ## Minnet
 
@@ -598,10 +614,8 @@ text haller det inte, och da var det inte langre ett beslut utan en lucka.
 Ingen kryptering over natet, sa en avlyssnare pa vagen ser bade hemligheten
 och innehallet: bakom brandvagg eller VPN.
 
-Ingen packning - ett uttalat beslut ovan, inte en lucka.
-
 Ingen sammanslagning INUTI en rad, och inga konfliktmarkorer: en krock
 loses genom att valja en sida eller redigera filen.
 
-Servern ger ett svar per uppkoppling, sa en push oppnar en per objekt.
-Keep-alive ar den enda kvarvarande posten pa listan.
+Ingen identitet mot en okand motpart: en nyckel ar en nyckel, och den som
+kopierar din kan vara du. Det racker for ett lag bakom en brandvagg.
