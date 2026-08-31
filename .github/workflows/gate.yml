@@ -1,0 +1,74 @@
+# Hela gaten, pa en maskin som inte ar forfattarens.
+#
+# Windows ar dar arbetet gors. Ubuntu ar det som aldrig har korts: POSIX-
+# grenarna i file_readonly, file_seek och mkdir_all ar skrivna och aldrig
+# exekverade, och det ar skillnad pa rimligt och bevisat. Forsta gronskan
+# dar ar den som betyder nagot.
+name: gate
+
+# En push behover ingen maskin for att upprepa vad gaten redan sagt pa den
+# dator som gjorde andringen. En PULL REQUEST ar det andra fallet: kod
+# ingen har kort an.
+on:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: gate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false   # en rod plattform far inte dolja den andras svar
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+
+    defaults:
+      run:
+        shell: bash   # Windows-koraren har Git Bash, och allt har ar bash
+
+    steps:
+      # rune och orion som GRANNAR: bygget letar efter ../orion/dist/orbit.
+      - uses: actions/checkout@v5
+        with:
+          path: rune
+
+      - uses: actions/checkout@v5
+        with:
+          repository: Lone-Lodge/orion
+          path: orion
+
+      # clang pa en Windows-korare driver MSVC-lankaren, som shellar ut till
+      # mt.exe for manifestet. SDK:n finns men dess bin ligger inte pa PATH,
+      # och lankningen dor med LNK1158 - utan att ha med koden att gora.
+      - name: windows sdk pa PATH
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $root = 'C:\Program Files (x86)\Windows Kits\10\bin'
+          $dir = Get-ChildItem $root -Directory |
+                 Where-Object { Test-Path (Join-Path $_.FullName "x64\mt.exe") } |
+                 Sort-Object Name -Descending | Select-Object -First 1
+          if (-not $dir) { throw "ingen Windows SDK med mt.exe under $root" }
+          Add-Content -Path $env:GITHUB_PATH -Value (Join-Path $dir.FullName "x64")
+
+      - name: verktygskedjan
+        run: clang --version && uname -s
+
+      # Fran en bar klon utan binar: exakt nagon annans forsta klon.
+      - name: orion ur froet
+        working-directory: orion
+        run: bash tools/seed_check.sh && bash tools/bootstrap.sh
+
+      - name: orbit
+        working-directory: orion
+        run: bash tools/build_orbit.sh
+
+      # Bygget plus bada sviterna, ett kommando och en utgangskod.
+      - name: gate
+        working-directory: rune
+        run: bash tools/gate.sh
