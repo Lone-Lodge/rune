@@ -78,10 +78,11 @@ remote innan en workflow har nagonstans att kora.
     rune init                   # starta ett repo har
     rune add .                  # koa hela tradet
     rune status                 # koat / nytt / andrat / borttaget
+    rune ur <sokvag>            # ta en sokvag UR kon
     rune commit "meddelande"
     rune log
     rune diff <fil> [commit]    # rader ut och in mot HEAD, eller mot en commit
-    rune history <fil>          # filens versioner, nyast forst
+    rune history <fil>          # filens versioner, nyast forst, over namnbyten
     rune show <commit> <fil> <ut>   # innehallet vid en commit, till en fil
     rune checkout <commit>      # skriv ut en ogonblicksbild
     rune lock <sokvag>          # ta filen, ingen annan far koa den
@@ -105,8 +106,18 @@ laggs bara om den saknas; vi skriver aldrig om nagons fil mer an sa.
 
 ## .runeignore
 
-En rad per monster. Ett monster UTAN stjarna ar ett prefix pa den relativa
-sokvagen: `Saved/` tar allt darunder. Med stjarna matchas hela sokvagen,
+En rad per monster, och SISTA monstret som traffar avgor. Ett `!` framfor
+betyder "behall anda":
+
+    Saved/                  allt darunder ut
+    !Saved/viktig.uasset    utom den har
+
+Negationen nar IN i en utesluten mapp. git gor tvartom och dokumenterar
+det; har ar det viktigare att `!` betyder nagot. `.rune/` gar inte att
+negera - ett lager som gar att koa in i sig sjalvt ar inget lager.
+
+Ett monster UTAN stjarna ar ett prefix pa den relativa sokvagen:
+`Saved/` tar allt darunder. Med stjarna matchas hela sokvagen,
 och `*` star for vilken foljd som helst - aven tom, aven over `/`:
 
     *.log        varje .log var den an ligger

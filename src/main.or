@@ -95,6 +95,12 @@ define cmd_diff(rel: text, vad: text) uses files, console:
     if n is 0:
         print_line("ingen skillnad")
 
+define cmd_ur(rel: text) uses files, console:
+    if unstage(root(), rel):
+        print_line("ur kon: {rel}")
+    else:
+        print_line("{rel} lag inte i kon")
+
 define cmd_status() uses files, console:
     loop row in status(root()):
         f = split(row, text_of([9]))
@@ -136,7 +142,11 @@ define cmd_history(rel: text) uses files, console:
 
 # Skriver till FIL, aldrig till stdout: binart innehall genom en konsol
 # blir CRLF-oversatt pa Windows och kommer fram trasigt.
-define cmd_show(id: text, rel: text, out: text) uses files, console:
+define cmd_show(vad: text, rel: text, out: text) uses files, console:
+    id = resolve(root(), vad)
+    if is_empty(id):
+        print_line("ingen entydig commit for {vad} - `rune log` visar vilka som finns")
+        return
     body = file_at(root(), id, rel)
     if is_empty(body):
         print_line("fanns inte i {id}: {rel}")
@@ -186,6 +196,9 @@ define main() -> number uses files, console, clock, env, net:
     else if cmd is "add":
         if need_repo():
             cmd_add(if length(args) > 2 then args[2] else ".")
+    else if cmd is "ur":
+        if need_repo():
+            cmd_ur(args[2])
     else if cmd is "status":
         if need_repo():
             cmd_status()

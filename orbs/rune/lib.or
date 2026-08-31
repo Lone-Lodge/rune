@@ -561,18 +561,45 @@ define glob_match(pat: text, s: text) -> truth:
 
 # Ett monster UTAN stjarna ar ett prefix, precis som forut: `Saved/` tar
 # allt darunder. Med stjarna matchas hela den relativa sokvagen.
+define matchar(rel: text, p: text) -> truth:
+    if index_of(p, "*") >= 0:
+        return glob_match(p, rel)
+    starts_with(rel, p) or rel is trim_end_slash(p)
+
+# SISTA monstret som traffar avgor, och ett `!` framfor betyder "behall
+# anda". Da gar det att halla en mapp utanfor och plocka tillbaka en fil ur
+# den, vilket ar hela skalet till att negation finns.
+#
+# `.rune/` provas for sig och gar inte att negera. Ett lager som gar att
+# koa in i sig sjalvt ar inte ett lager.
 define ignored(rel: text, pats: [text]) -> truth:
+    if starts_with(rel, ".rune/") or rel is ".rune":
+        return true
     edit hit = false
     loop p in pats:
-        if index_of(p, "*") >= 0:
-            if glob_match(p, rel):
-                hit = true
-        else if starts_with(rel, p) or rel is trim_end_slash(p):
-            hit = true
+        neg = starts_with(p, "!")
+        m = if neg then text_of(bytes_part(bytes_of(p), 1, byte_count(p))) else p
+        if matchar(rel, m):
+            hit = not neg
     hit
 
 define trim_end_slash(p: text) -> text:
     if ends_with(p, "/") then text_of(bytes_part(bytes_of(p), 0, byte_count(p) - 1)) else p
+
+# En ignorerad MAPP hoppas over, men bara om ingen negation pekar in i
+# den. Utan det gar det aldrig att plocka en fil ur en utesluten mapp, och
+# det ar just det `!` finns till for. git gor tvartom och dokumenterar det;
+# har ar det viktigare att `!` betyder nagot.
+define ignored_dir(rel: text, pats: [text]) -> truth:
+    if not ignored(rel + "/", pats):
+        return false
+    edit ner = false
+    loop p in pats:
+        if starts_with(p, "!"):
+            m = text_of(bytes_part(bytes_of(p), 1, byte_count(p)))
+            if starts_with(m, rel + "/") or index_of(m, "*") >= 0:
+                ner = true
+    not ner
 
 # Alla filer under `root`, som relativa sokvagar, ignorerade bortsorterade.
 public define walk(root: text) -> [text] uses files:
@@ -589,7 +616,7 @@ define walk_at(root: text, rel: text, pats: [text]) -> [text] uses files:
     loop d in list_dirs(here):
         if not is_empty(d):
             r = if is_empty(rel) then d else rel + "/" + d
-            if not ignored(r + "/", pats):
+            if not ignored_dir(r, pats):
                 loop deeper in walk_at(root, r, pats):
                     out = append(out, deeper)
     out
@@ -690,6 +717,19 @@ define stage(root: text, rels: [text], borta: [text], owner: text) -> Koat uses 
 # Koa namngivna sokvagar.
 public define add(root: text, rels: [text], owner: text) -> Koat uses files:
     stage(root, rels, [], owner)
+
+# Ta en sokvag UR kon. true om den lag dar.
+#
+# Utan den ar enda vagen ur kon att committa eller att redigera .rune/index
+# for hand, och det andra ar inte ett arbetssatt man ska behova.
+public define unstage(root: text, rel: text) -> truth uses files:
+    rd = rune_dir(root)
+    edit idx = karta_av(read_lines(rd + "/index"))
+    if not has(idx, rel):
+        return false
+    idx = map_remove(idx, rel)
+    write_lines(rd + "/index", rader_av(idx))
+    true
 
 # Koa hela tradet: allt som finns, och en markering for det som fanns i
 # HEAD men inte langre pa disken. Den ar den enda som kan se en
@@ -1192,12 +1232,33 @@ public define break_lock(root: text, path: text) -> text uses files:
 
 # Filens versioner, nyast forst: en rad per DISTINKT innehall, markt med
 # den nyaste commit som bar det. Rader "commit<TAB>unixtid<TAB>blob".
+define path_with_blob(rader: [text], blob: text) -> text:
+    edit hit = ""
+    loop l in rader:
+        if entry_blob(l) is blob and is_empty(hit):
+            hit = entry_path(l)
+    hit
+
+# FOLJER NAMNBYTEN, och det kostar ingenting extra: ett namnbyte ar samma
+# blob under ett annat namn, och blobbar ar vad manifestet redan bar.
+#
+# Nar sokvagen saknas i en aldre commit letar vi efter det innehall den
+# hade i den nyare. Hittas det under ett annat namn fortsatter historien
+# dar. Ligger samma innehall under FLERA namn valjs det forsta - tva
+# identiska filer gar inte att skilja pa, och det ar en arlig gissning.
 public define file_history(root: text, rel: text) -> [text] uses files:
     rd = rune_dir(root)
     edit out = []
     edit seen = ""
+    edit vag = rel
     loop id in log(root):
-        blob = lookup(commit_manifest(root, id), rel)
+        rader = commit_manifest(root, id)
+        edit blob = lookup(rader, vag)
+        if is_empty(blob) and not is_empty(seen):
+            annan = path_with_blob(rader, seen)
+            if not is_empty(annan):
+                vag = annan
+                blob = seen
         if not is_empty(blob) and blob is not seen:
             when = commit_field(get_object(rd, "commits", id), "time")
             out = append(out, id + tab() + when + tab() + blob)

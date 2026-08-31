@@ -88,6 +88,52 @@ check "okand fil har ingen" "$("$RUNE" history finns-inte.txt | grep -c 'ingen h
 "$RUNE" show "$C1" bild.png v1.bin >/dev/null
 check "show ger commit 1:s innehall" "$(md5 v1.bin)" "$H_PNG"
 
+echo "== ur kon =="
+mkdir -p "$T/ur"; cd "$T/ur"
+"$RUNE" init >/dev/null
+echo a > a.txt; echo b > b.txt
+"$RUNE" add . >/dev/null
+check "bada koade" "$("$RUNE" status | grep -c koat)" "2"
+check "ur sager att den lag dar" "$("$RUNE" ur b.txt | grep -c 'ur kon')" "1"
+check "och nu ar bara en koad" "$("$RUNE" status | grep -c koat)" "1"
+check "en andra gang sager ifran" "$("$RUNE" ur b.txt | grep -c 'lag inte')" "1"
+cd "$T"
+
+echo "== runeignore med negation =="
+# Utan att negationen nar IN i en utesluten mapp betyder `!` ingenting.
+mkdir -p "$T/neg/Saved"; cd "$T/neg"
+"$RUNE" init >/dev/null
+echo x > Saved/skrap.txt; echo y > Saved/viktig.txt; echo z > a.log; echo w > behall.log
+printf 'Saved/
+!Saved/viktig.txt
+*.log
+!behall.log
+' > .runeignore
+check "utesluten mapp ar utesluten" "$("$RUNE" status | grep -c skrap)" "0"
+check "men negationen nar in i den" "$("$RUNE" status | grep -c 'Saved/viktig')" "1"
+check "glob utesluter" "$("$RUNE" status | grep -c 'a.log')" "0"
+check "och negationen tar tillbaka" "$("$RUNE" status | grep -c behall)" "1"
+cd "$T"
+
+echo "== historik over ett namnbyte =="
+# Ett namnbyte ar samma blob under ett annat namn, och blobbar ar vad
+# manifestet redan bar - sa det kostar ingenting extra att folja.
+mkdir -p "$T/nb"; cd "$T/nb"
+"$RUNE" init >/dev/null
+printf 'ett
+' > a.txt; "$RUNE" add . >/dev/null; "$RUNE" commit a1 >/dev/null
+printf 'tva
+' > a.txt; "$RUNE" add . >/dev/null; "$RUNE" commit a2 >/dev/null
+mv a.txt b.txt; "$RUNE" add . >/dev/null; "$RUNE" commit namnbyte >/dev/null
+printf 'tre
+' > b.txt; "$RUNE" add . >/dev/null; "$RUNE" commit b3 >/dev/null
+check "historiken foljer med over bytet" "$("$RUNE" history b.txt | wc -l)" "3"
+A=$("$RUNE" history b.txt | tail -1 | awk '{print $1}')
+"$RUNE" show "$A" a.txt ut.txt >/dev/null
+check "och aldsta versionen ar den forsta" "$(cat ut.txt)" "ett"
+check "show tar ett forkortat id" "$("$RUNE" show "$A" a.txt ut2.txt | grep -c skrev)" "1"
+cd "$T"
+
 echo "== diff =="
 mkdir -p "$T/df"; cd "$T/df"
 "$RUNE" init >/dev/null
